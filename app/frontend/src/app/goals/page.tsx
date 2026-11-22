@@ -1,5 +1,5 @@
-import { PlanEditors } from "@/components/PlanEditors";
+import { GoalsPage } from "@/components/GoalsPage";
 
-export default function GoalsPage() {
-  return <PlanEditors page="goals" />;
+export default function Goals() {
+  return <GoalsPage />;
 }

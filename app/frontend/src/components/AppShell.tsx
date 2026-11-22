@@ -146,7 +146,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
         <Link key={href} href={scopedHref(href, scope)} aria-current={path === href ? "page" : undefined}
           className={clsx("flex items-center justify-center font-medium hover:text-ink",
             mobile ? "h-[55px] flex-col gap-0.5 text-[11.5px]" : "rounded-full px-3 py-2 text-[13.5px]",
-            path === href ? "text-accent md:bg-page" : "text-muted")}>
+            path === href || (href !== "/" && path.startsWith(`${href}/`)) ? "text-accent md:bg-page" : "text-muted")}>
           {mobile && <Icon size={18} />}{label}
         </Link>
       ))}
@@ -185,7 +185,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   { value: "emil", label: ws.people[1].name },
                 ]} />
               </div>
-              {path !== "/" && <OutcomeStrip />}
+              {path !== "/" && !path.startsWith("/goals/") && <OutcomeStrip />}
             </>
           )}
         </div>

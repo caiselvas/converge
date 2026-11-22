@@ -58,7 +58,7 @@ function headline(ev: Evaluation, personId?: string): { title: string; sub: stri
   };
 }
 
-function Explanation({ changes, stress }: { changes: Change[]; stress: Stress }) {
+export function Explanation({ changes, stress }: { changes: Change[]; stress: Stress }) {
   const [result, setResult] = useState<ExplainResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);

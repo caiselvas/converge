@@ -59,7 +59,9 @@ function ProposalCard({ p, actionable }: { p: Proposal; actionable: boolean }) {
           </div>
         </div>
         {p.kind === "recommendation" && <Badge tone="info">Suggested by engine</Badge>}
+        {p.kind === "decision" && <Badge tone="info">Life decision</Badge>}
       </div>
+      {p.kind === "decision" && p.note && <p className="mt-2 text-[12.5px] leading-5 text-ink-2">{p.note}</p>}
       <div className="mt-2 divide-y divide-line">{p.described.map((c) => <ChangeRow key={c.path} c={c} />)}</div>
       {p.status === "pending" && <div className="mt-2"><Impact id={p.id} /></div>}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">

@@ -346,6 +346,58 @@ def _interpret_offline(plan: Plan, text: str, viewer: str) -> dict:
     )
 
 
+# --------------------------------------------------------------------------- decision intake
+
+
+class IntakeAnswer(StructuredOutput):
+    question_id: str
+    partner_id: str | None
+    number: float | None
+    text: str | None
+    flag: bool | None
+
+
+class Intake(StructuredOutput):
+    answers: list[IntakeAnswer]
+    ambiguities: list[str]
+    next_question_id: str | None
+    next_question: str | None
+
+
+INTAKE_SYSTEM = """You help a couple prepare a major financial life decision in the Converge planning app.
+You read the question catalogue in the context and, when given, the viewer's message.
+Your only jobs:
+1. Extract answers the viewer clearly stated, for questions in `questions` (use their exact `id`).
+   - `number` for amounts, shares and counts. CHF amounts as plain numbers (1.2 million = 1200000). Shares as decimals (25% = 0.25), except questions whose unit starts with "%", which use 0-100.
+   - `text` for months (YYYY-MM), option values (use the option `value`, not its label) and partner ids.
+   - `flag` for yes/no questions. Leave the other two fields null.
+   - Personal preference questions (`per_partner` true) may only be answered for the viewer: set `partner_id` to the viewer's id. Never state the partner's preferences, even if the viewer describes them.
+   - Do not guess. If something is vague, leave it out and add a short question to `ambiguities`.
+2. Choose the most useful next question from `open_questions` (or null if none) and phrase it in one or two short, warm sentences addressed to the viewer by name.
+   - Keep the meaning of the catalogue prompt. Offer the options in words if there are any.
+   - Do not mention numbers that are not in the context.
+Never calculate affordability, savings, costs or outcomes, and never say whether a plan is safe: the simulation engine does that."""
+
+
+def decision_intake(context: dict, text: str | None) -> tuple[Intake | None, dict]:
+    """Ask the language model to read an answer and phrase the next question.
+
+    Returns ``(None, meta)`` when no provider is configured or the call fails;
+    callers then use the deterministic flow. Output is validated by the caller.
+    """
+    provider = config.llm_provider()
+    if provider is None or not llm_available():
+        return None, dict(mode="offline")
+    model = llm_model(provider)
+    message = f"Context:\n{json.dumps(context, default=str)}\n\n"
+    message += f"Viewer's message:\n{text}" if text else "The viewer has not written anything; only choose and phrase the next question."
+    try:
+        data = _call_structured(provider, model, INTAKE_SYSTEM, message, Intake, 900)
+    except Exception as error:
+        return None, dict(mode="offline", notice=f"{_failure_notice(provider, 'intake', error)} Using the guided questions.")
+    return data, dict(mode="llm", provider=provider, model=model)
+
+
 # --------------------------------------------------------------------------- explanations
 
 EXPLAIN_SYSTEM = """You explain a financial simulation result to a couple in 2-4 short sentences of plain language.

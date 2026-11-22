@@ -4,18 +4,19 @@ Start both servers (`make dev`) and open <http://localhost:3000>. Reset first: `
 
 To replay the numbers without starting either server, run `PYTHONPATH=app/backend app/backend/.venv/bin/python scripts/demo_check.py` from the repository root.
 
-Use **Overview** for the verdict, decisions, recommendations and chart. **Goals** and **Expenses** keep a live verdict above the editor. The scope control follows you across all three pages.
+Use **Overview** for the verdict, decision summaries, recommendations and chart. **Goals** is where life decisions are planned and personal goals kept; **Expenses** holds budgets. Both keep a live verdict at the top. The scope control follows you across all three pages.
 
 **1. Two independent futures (30 s)** — viewing as Nina
 
 - The headline reads "Your plan works for both of you." The chart shows Nina's opening cash (CHF 286’652) and Emil's (CHF 157’059) on separate lines, loaded from UBS profiles P00918 and P00809.
 - Select **Nina** and open **Expenses**. Lower *Restaurants* and watch the lowest-cash chip update. Click **Discard** to undo. *About this data* shows reconciliation to CHF 0.00. Return to **Overview** in **Together** scope.
 
-**2. Connect their finances (30 s)**
+**2. Plan a life decision together (45 s)**
 
-- Click **+ Buy a home**. **Goals** opens with a CHF 1.4M home in Zurich, a 25% deposit, a purchase in April 2028 and moving in together in April 2027.
-- Return to **Overview** and point out the drop in both lines at the purchase as the deposit turns into equity (switch the chart to *Net worth*). The plan stays *On track* with imputed housing costs at 31.7% of combined usual net income. Optionally, reduce the deposit to 20% to show the affordability limit, then restore it to 25%.
-- **Propose to Emil** → switch the viewer to **Emil** → **Proposals** → **Approve**.
+- Open **Goals**. The top section, *Plan a life decision*, offers Move in together, Buy a home and Have a child. Choose **Buy a home**. Nothing changes in the plan yet.
+- Answer the first question in your own words, e.g. *"around 1.4 million"* (read by Claude when a key is configured, otherwise by the built-in parser, labelled as such). Accept the suggested April 2028 purchase, 25% deposit and 50/50 deposit split. Choose to rent together first, from April 2027 at CHF 3,400 a month, and share costs in proportion to income. These are the values the later steps assume. Answer Nina's three personal questions. The decision brief on the right fills in as you go and lists that Emil has not shared his view yet.
+- **See the consequences** simulates the brief on top of the agreed plan: both partners stay above their buffers, imputed housing costs are 31.7% of combined usual net income, and the chart shows the deposit drop against the agreed plan (dashed).
+- **Propose to Emil** → switch the viewer to **Emil**. Emil's planner asks only his own three preferences (everything else is already answered) and the brief shows where they see things differently. **Proposals** → **Approve**. Back on Overview the *Home* chip summarises the purchase and links to the planner.
 
 **3. Introduce a conflict (30 s)** — viewing as Emil
 

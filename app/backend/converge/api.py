@@ -1,14 +1,16 @@
 """HTTP API (FastAPI). All financial numbers returned are computed by the engine."""
 from __future__ import annotations
 
+import json
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
 from converge import ai, assumptions, config
+from converge import decisions as D
 from converge.data import profiles as profile_data
 from converge.data.ubs import DataUnavailableError
 from converge.engine import months as M
@@ -67,6 +69,26 @@ class InterpretIn(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
     viewer: str
     changes: list[Change] = Field(default_factory=list, max_length=200)
+
+
+class DecisionStepIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    viewer: str
+    answers: dict[str, Any] = Field(default_factory=dict)
+    preferences: dict[str, Any] = Field(default_factory=dict)
+    adjustments: list[Change] | None = Field(None, max_length=50)
+    text: str | None = Field(None, max_length=1000)
+    focus: str | None = None
+    ask_next: bool = False
+
+
+class DecisionProposeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    author: str
+    title: str = Field("", max_length=200)
+    remove: bool = False
 
 
 class ExplainIn(BaseModel):
@@ -136,7 +158,127 @@ def workspace():
         proposals=[p.model_dump() for p in ws.proposals],
         llm_available=ai.llm_available(),
         child_defaults=dict(child=child.model_dump(), first_day_tariff=KITA_INFANT_TARIFF),
+        decisions=[_decision_summary(m) for m in D.MODULES.values()],
     )
+
+
+# --------------------------------------------------------------------------- life decisions
+
+
+def _decision_module(mid: str) -> D.DecisionModule:
+    try:
+        return D.module(mid)
+    except D.AnswerError as e:
+        raise HTTPException(404, str(e)) from None
+
+
+def _linked_proposal(session: D.DecisionSession) -> dict | None:
+    if not session.proposal_id:
+        return None
+    try:
+        p = store.proposal(session.proposal_id)
+    except WorkflowError:
+        return None
+    return dict(id=p.id, status=p.status, approvals=p.approvals, author=p.author, title=p.title,
+                changes=[c.model_dump() for c in p.changes])
+
+
+def _decision_summary(m: D.DecisionModule) -> dict:
+    session = store.decision_session(m.id) if store.has_decision_session(m.id) else None
+    return D.summary(m, store.plan, session, _linked_proposal(session) if session else None)
+
+
+def _decision_state(m: D.DecisionModule, viewer: str, turn: dict | None = None) -> dict:
+    plan = store.plan
+    if viewer not in [p.id for p in plan.people]:
+        raise HTTPException(422, "unknown viewer")
+    session = store.decision_session(m.id)
+    out = D.state(m, plan, session, viewer, _linked_proposal(session))
+    if out["proposal"]:
+        proposed = {c["path"]: c["value"] for c in out["proposal"].pop("changes")}
+        current = {c["path"]: c["value"] for c in out["changes"]}
+        out["proposal"]["outdated"] = json.dumps(proposed, sort_keys=True, default=str) != json.dumps(current, sort_keys=True, default=str)
+    if turn is not None:
+        if turn.get("next") and out["next"] and turn["next"]["id"] == out["next"]["id"]:
+            out["next"] = turn["next"]
+        out["turn"] = {k: v for k, v in turn.items() if k != "next"}
+    out["llm_available"] = ai.llm_available()
+    return out
+
+
+@app.get("/api/decisions")
+def decision_list():
+    return [_decision_summary(m) for m in D.MODULES.values()]
+
+
+@app.get("/api/decisions/{mid}")
+def decision_state(mid: str, viewer: str):
+    return _decision_state(_decision_module(mid), viewer)
+
+
+@app.post("/api/decisions/{mid}/step")
+def decision_step(mid: str, body: DecisionStepIn):
+    m = _decision_module(mid)
+    plan = store.plan
+    session = store.decision_session(mid)
+    try:
+        changed = D.apply_answers(m, plan, session, body.viewer, body.answers, body.preferences)
+        if body.adjustments is not None:
+            D.absorb(m, plan, session, body.viewer, body.adjustments)
+            changed.append("adjustments")
+    except (D.AnswerError, ChangeError) as e:
+        raise HTTPException(422, str(e)) from None
+    text = (body.text or "").strip() or None
+    turn = D.take_turn(m, plan, session, body.viewer, text, body.focus, body.ask_next)
+    plan_changed = bool(changed) or any(not m.question(e["question_id"]).per_partner for e in turn["extracted"])
+    linked = _linked_proposal(session)
+    if plan_changed and linked and linked["status"] != "pending":
+        session.proposal_id = None  # a decided proposal no longer describes the new answers
+    store.save_decision_session(session)
+    return _decision_state(m, body.viewer, turn)
+
+
+@app.post("/api/decisions/{mid}/propose")
+def decision_propose(mid: str, body: DecisionProposeIn):
+    m = _decision_module(mid)
+    plan = store.plan
+    session = store.decision_session(mid)
+    if body.remove:
+        changes = [c for c in m.remove(plan) if c.value != D.get_value(plan, c.path)]
+        title = body.title or f"Remove from plan: {m.title.lower()}"
+        if not changes:
+            raise HTTPException(422, "This decision is not part of your agreed plan.")
+    else:
+        values, _ = D.resolve(m, plan, session)
+        open_plan = [q for q in D.pending(m, plan, session, body.author, values) if not q.per_partner]
+        if open_plan:
+            raise HTTPException(422, f"Answer “{D._render(open_plan[0].label, plan)}” before proposing.")
+        changes, errors = D.compile_changes(m, plan, session, values)
+        if errors:
+            raise HTTPException(422, errors[0])
+        if not changes:
+            raise HTTPException(422, "This already matches your agreed plan.")
+        title = body.title or f"{m.title}: {m.headline(plan, values)}"
+    brief = D.state(m, plan, session, body.author)["brief"]
+    note = " ".join(f"{p['name']}: {p['summary']}." for p in brief["partners"] if p["summary"])[:1000]
+    earlier = _linked_proposal(session)
+    try:
+        prop = store.propose(body.author, title, changes, "decision", note)
+        if earlier and earlier["status"] == "pending":
+            store.supersede(earlier["id"], "Replaced by a newer version of this decision.")
+    except (ChangeError, WorkflowError) as e:
+        raise HTTPException(422, str(e)) from None
+    if not body.remove:
+        session.proposal_id = prop.id
+        store.save_decision_session(session)
+    return prop.model_dump()
+
+
+@app.delete("/api/decisions/{mid}")
+def decision_restart(mid: str, viewer: str):
+    m = _decision_module(mid)
+    store.clear_decision_session(m.id)
+    return _decision_state(m, viewer)
 
 
 @app.post("/api/simulate")

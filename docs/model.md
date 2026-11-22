@@ -71,13 +71,35 @@ Every violation reports the partner, the first and worst month, the shortfall, a
 5. **Diversity.** The selected options share no lever, so the alternatives are meaningfully different.
 6. Each recommendation lists the exact old → new values, who must approve, the impact on each partner (cushion, runway, end cash and net worth, goals), the impact on the shared home, what it resolves or leaves open, and its trade-offs. If nothing works, the closest option and its remaining shortfall are reported.
 
-## 5. Language model boundary
+## 5. Life-decision planner
+
+Goals offers guided planners for three decisions: **Move in together**, **Buy a home** and **Have a child**. Each is a module in `app/backend/converge/decisions.py` that declares:
+
+- its questions (kind, bounds, options), each tied to a whitelisted lever path or to a small compile step;
+- how a question is prefilled: an answer given in the planner, otherwise the **agreed plan** when that part of the plan already exists (and is then not asked again), otherwise a labelled suggestion or default;
+- how the answers compile into `Change` objects. Only changes that differ from the agreed plan are kept, and the whole set is validated with `apply_changes` before it can be simulated or proposed.
+
+| Decision | Plan fields |
+|---|---|
+| Move in together | `shared.household.*` (enabled, move-in, rent, utilities, groceries, moving costs), `shared.split.*` |
+| Buy a home | `shared.property.*` (price, purchase, target date, deposit, ownership share, mortgage rate, fees, amortisation), plus living together from the purchase month or earlier, and the split |
+| Have a child | `shared.children` (birth, birth parent, Kita days, start and end, everyday costs, allowance recipient), `shared.split.adjust_for_breaks`, and optional extra time off as a career break (`cb-<child id>`) starting after the statutory leave |
+
+**Preferences** (what matters most, how flexible a date or budget is) are stored per partner. Only that partner can set them; they are never inferred from transactions and never change the plan. They are shown in the brief (fixed points, open to change, where partners differ) and are compared, deterministically, with the changes in any verified alternative ("Conflicts: Emil said the date is essential").
+
+**State.** Answers live in a per-decision session in `workspace.json`, separate from the agreed plan and from personal drafts. The review simulates the compiled changes on top of the agreed plan with `/api/simulate`, and `/api/recommendations` when there are issues. A verified alternative can be taken into the brief; changes to a question's own path update that answer, others are kept as explicit adjustments. Proposing creates a `decision` proposal with the usual approval rules (shared changes need both partners). A newer proposal from the same planner supersedes a pending earlier one.
+
+**Language model role.** With a key, the model reads free-text answers and phrases the next open question (`/api/decisions/{id}/step`). It returns structured answers that are validated exactly like form input; preference answers are accepted only for the viewer; question wording that introduces numbers not in its context is discarded. It sees questions and answers, never simulation results. Without a key (or on an error), the built-in parser reads the focused question only and questions follow a fixed order, labelled as such.
+
+**Not in this version:** uncertainty ranges, optimisation over stated preferences, more than one child per planner session (the planner edits the earliest child), custom Kita tariffs (still Zurich rates), and other decision types.
+
+## 6. Language model boundary
 
 - **Interpret.** Claude (`claude-opus-5-5`, JSON-schema constrained output) maps text to `Change` objects drawn from the plan's lever catalogue. Each change is validated by the same schema as user edits, and invalid ones are dropped and reported. The model never sees or produces results.
 - **Explain.** Claude summarises engine facts. Every number in the text must match a fact (allowing rounding). Otherwise the text is discarded and the engine's deterministic summary is shown, with a notice.
 - **Without a key, or on an API error,** the rule-based parser and deterministic summaries are used, and they are labelled as such.
 
-## 6. Assumptions and sources
+## 7. Assumptions and sources
 
 Listed in-app (`···` → *Assumptions & sources*) and in `app/backend/converge/assumptions.py`:
 
@@ -86,7 +108,7 @@ Listed in-app (`···` → *Assumptions & sources*) and in `app/backend/converg
 - 20% minimum deposit, 5% imputed rate, 1% maintenance, one-third affordability rule, 15-year amortisation to 2/3 (UBS and Credit Suisse mortgage guides).
 - Illustrative defaults include an extra deduction of 0%, income growth of 0.8%, an investment return of 3%, purchase fees of 1%, shared rent of CHF 3,400 and flat property prices.
 
-## 7. Limitations
+## 8. Limitations
 
 - Synthetic data only. It is not representative of the Swiss population, and the relationship between the two profiles is assumed.
 - The optional extra deduction is a flat percentage of net pay. The model omits tax lag, wealth tax, pillar 2/3a and the tax effects of marriage or home ownership.

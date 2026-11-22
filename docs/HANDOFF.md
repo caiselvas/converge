@@ -4,8 +4,10 @@ Branch `cai`. Last code commit: **`31ec27d`** (single-screen UI redesign). The e
 
 ## Navigation and child
 
-- Overview (`/`), Goals (`/goals`) and Expenses (`/expenses`) share the URL-backed scope, draft, viewer and Ask panel. The two editor pages show a live outcome strip.
-- **Have a child** opens the Together Goals editor. Child changes use the shared `shared.children` lever and require both approvals. Together Expenses shows the engine’s monthly child costs alongside joint contributions.
+- Overview (`/`), Goals (`/goals`) and Expenses (`/expenses`) share the URL-backed scope, draft, viewer and Ask panel. Goals and Expenses show a live outcome strip; the decision planners do not, because they preview their own result.
+- **Goals** has two sections. *Plan a life decision* opens a guided planner per decision (`/goals/move-in`, `/goals/buy-home`, `/goals/have-child`). *Financial goals* holds each partner's safety buffer and savings goals (career breaks stay in a partner's own scope and on Overview).
+- The planners are the only editors for living together, the home, children and the cost split. Overview chips only summarise and link to them; they no longer add anything to the draft. Together Expenses shows the resulting shared costs read-only, with links back to the planner.
+- Decision modules live in `app/backend/converge/decisions.py` (questions, prefill, validation, mapping to `Change` objects). Interview answers are stored per decision in `workspace.json` (`decisions`), separate from the agreed plan and from personal drafts, and reach the plan only through a `decision` proposal. See `docs/model.md` §5.
 - Child costs, allowance, parental leave and the **Child born** event come from the engine. The standalone child replay in `scripts/demo_check.py` follows the main demo and uses the assumptions documented in `docs/model.md`.
 
 ## 1. Product and UX decisions

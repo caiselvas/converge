@@ -1,5 +1,6 @@
 import type {
-  AssumptionRow, Change, ExplainResponse, InterpretResponse, LlmProvider, Proposal, RecResponse, SimResponse, Stress, Workspace,
+  AssumptionRow, Change, DecisionState, DecisionStepIn, ExplainResponse, InterpretResponse, LlmProvider, Proposal, RecResponse,
+  SimResponse, Stress, Workspace,
 } from "./types";
 
 export const llmProviderLabel = { anthropic: "Claude", openai: "OpenAI" } satisfies Record<LlmProvider, string>;
@@ -51,4 +52,11 @@ export const api = {
   interpret: (text: string, viewer: string, changes: Change[]) =>
     call<InterpretResponse>("/assistant/interpret", { json: { text, viewer, changes } }),
   explain: (changes: Change[], stress?: Stress) => call<ExplainResponse>("/assistant/explain", { json: { changes, stress } }),
+  decision: (id: string, viewer: string, signal?: AbortSignal) =>
+    call<DecisionState>(`/decisions/${encodeURIComponent(id)}?viewer=${encodeURIComponent(viewer)}`, { signal }),
+  decisionStep: (id: string, body: DecisionStepIn) => call<DecisionState>(`/decisions/${encodeURIComponent(id)}/step`, { json: body }),
+  decisionPropose: (id: string, author: string, opts: { title?: string; remove?: boolean } = {}) =>
+    call<Proposal>(`/decisions/${encodeURIComponent(id)}/propose`, { json: { author, ...opts } }),
+  decisionRestart: (id: string, viewer: string) =>
+    call<DecisionState>(`/decisions/${encodeURIComponent(id)}?viewer=${encodeURIComponent(viewer)}`, { method: "DELETE" }),
 };

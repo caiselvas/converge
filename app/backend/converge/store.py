@@ -20,6 +20,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from converge import config
+from converge.decisions import DecisionSession
 from converge.engine.changes import ChangeError, apply_changes, describe, format_value, required_approvers
 from converge.models import Change, Plan
 
@@ -35,7 +36,7 @@ class Proposal(BaseModel):
     author: str
     title: str
     note: str = ""
-    kind: Literal["manual", "recommendation", "assistant", "restore"] = "manual"
+    kind: Literal["manual", "recommendation", "assistant", "restore", "decision"] = "manual"
     changes: list[Change]
     described: list[dict] = []
     approvals: dict[str, ApprovalState]
@@ -59,6 +60,8 @@ class Workspace(BaseModel):
     plan: Plan
     versions: list[Version]
     proposals: list[Proposal] = []
+    # Guided life-decision interviews, kept apart from the agreed plan until proposed.
+    decisions: dict[str, DecisionSession] = {}
 
 
 class WorkflowError(ValueError):
@@ -139,6 +142,25 @@ class Store:
                 return p
         raise WorkflowError("proposal not found")
 
+    def decision_session(self, module_id: str) -> DecisionSession:
+        """The session for a decision module (a fresh, unsaved one if none exists)."""
+        ws = self.load()
+        session = ws.decisions.get(module_id)
+        return session.model_copy(deep=True) if session else DecisionSession(module=module_id)
+
+    def has_decision_session(self, module_id: str) -> bool:
+        return module_id in self.load().decisions
+
+    def save_decision_session(self, session: DecisionSession) -> None:
+        with self._lock:
+            self.load().decisions[session.module] = session
+            self._save()
+
+    def clear_decision_session(self, module_id: str) -> None:
+        with self._lock:
+            self.load().decisions.pop(module_id, None)
+            self._save()
+
     def version(self, vid: int) -> Version:
         for v in self.load().versions:
             if v.id == vid:
@@ -190,6 +212,18 @@ class Store:
             if person in prop.approvals:
                 prop.approvals[person] = "rejected"
             prop.status = "rejected"
+            prop.decided_at = _now()
+            self._save()
+            return prop
+
+    def supersede(self, proposal_id: str, reason: str) -> Proposal:
+        """Close a pending proposal that a newer version replaces."""
+        with self._lock:
+            prop = self.proposal(proposal_id)
+            if prop.status != "pending":
+                raise WorkflowError("proposal is no longer pending")
+            prop.status = "superseded"
+            prop.error = reason
             prop.decided_at = _now()
             self._save()
             return prop

@@ -1,14 +1,14 @@
 "use client";
 
 import * as Popover from "@radix-ui/react-popover";
-import { Baby, Briefcase, Gauge, Home, X } from "lucide-react";
+import { Baby, Briefcase, Gauge, Home, KeyRound, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
 import { chf, monthLabel, pct } from "@/lib/format";
-import { scopedHref, useStore } from "@/lib/store";
+import { useStore } from "@/lib/store";
 import type { Person, Stress } from "@/lib/types";
-import { useAddChild } from "./ChildPlan";
+import { decisionHref } from "./decisions/registry";
 import { CareerBreakForm } from "./PersonPlan";
 import { Range, Segmented, clsx } from "./ui";
 
@@ -100,34 +100,39 @@ export function StressTag() {
 }
 
 export function Decisions() {
-  const { draftPlan, scopedPerson, addChanges, setChange } = useStore();
-  const { addChild } = useAddChild();
+  const { draftPlan, scopedPerson, setChange, scope } = useStore();
   if (!draftPlan) return null;
   const property = draftPlan.shared.property;
+  const household = draftPlan.shared.household;
   const children = draftPlan.shared.children;
   const firstChild = children.length ? [...children].sort((a, b) => a.birth.localeCompare(b.birth))[0] : null;
   const people = scopedPerson ? [scopedPerson] : draftPlan.people;
   const withoutBreak = people.filter((p) => !p.career_breaks.length);
+  // Life decisions are planned in Goals. These chips only summarise and navigate; they never change the plan.
+  const living = household.enabled && !property.enabled;
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {!scopedPerson && !property.enabled && <span className={clsx("inline-flex items-center rounded-full", living && "border border-line-strong bg-white")}>
+        <Link href={decisionHref("move-in", scope)} className={clsx(chip, living && "border-0 shadow-none")}>
+          <KeyRound size={16} className="text-muted" />
+          {living ? `Living together · from ${monthLabel(household.move_in, true)}` : "+ Move in together"}
+        </Link>
+        {living && <RemoveDecision label="Stop living together in this draft" onClick={() => setChange("shared.household.enabled", false)} />}
+      </span>}
       {!scopedPerson && <span className={clsx("inline-flex items-center rounded-full", property.enabled && "border border-line-strong bg-white")}>
-        <Link href={scopedHref("/goals", "together", "#home")} className={clsx(chip, property.enabled && "border-0 shadow-none")}
-          onClick={() => {
-            if (!property.enabled) addChanges([{ path: "shared.household.enabled", value: true }, { path: "shared.property.enabled", value: true }]);
-          }}>
+        <Link href={decisionHref("buy-home", scope)} className={clsx(chip, property.enabled && "border-0 shadow-none")}>
           <Home size={16} className="text-muted" />
           {property.enabled ? `Home · ${chf(property.price, { compact: true })} · ${monthLabel(property.purchase, true)}` : "+ Buy a home"}
         </Link>
-        {property.enabled && <RemoveDecision label="Remove home purchase" onClick={() => setChange("shared.property.enabled", false)} />}
+        {property.enabled && <RemoveDecision label="Remove home purchase from this draft" onClick={() => setChange("shared.property.enabled", false)} />}
       </span>}
       {!scopedPerson && <span className={clsx("inline-flex items-center rounded-full", firstChild && "border border-line-strong bg-white")}>
-        <Link href={scopedHref("/goals", "together", "#children")} className={clsx(chip, firstChild && "border-0 shadow-none")}
-          onClick={() => { if (!firstChild) addChild(); }}>
+        <Link href={decisionHref("have-child", scope)} className={clsx(chip, firstChild && "border-0 shadow-none")}>
           <Baby size={16} className="text-muted" />
           {firstChild ? `${children.length === 1 ? "Child" : `${children.length} children`} · ${monthLabel(firstChild.birth)}` : "+ Have a child"}
         </Link>
         {firstChild && children.length === 1 &&
-          <RemoveDecision label="Remove child from plan" onClick={() => setChange("shared.children", [])} />}
+          <RemoveDecision label="Remove child from this draft" onClick={() => setChange("shared.children", [])} />}
       </span>}
       {people.flatMap((person) => person.career_breaks.map((entry) => (
         <span key={`${person.id}:${entry.id}`} className="inline-flex max-w-full items-center rounded-full border border-line-strong bg-white">

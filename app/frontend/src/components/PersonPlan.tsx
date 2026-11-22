@@ -6,9 +6,9 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { addMonths, chf, monthLabel, num } from "@/lib/format";
 import { useDisplayed, useStore } from "@/lib/store";
-import type { CareerBreak, Goal, Person } from "@/lib/types";
+import type { CareerBreak, Goal, GoalStatus, Person } from "@/lib/types";
 import { EditRow, PlanSection } from "./EditRow";
-import { Button, MonthField, NumberField } from "./ui";
+import { Avatar, Button, MonthField, NumberField, clsx } from "./ui";
 
 function Provenance({ pid }: { pid: string }) {
   const [l, setL] = useState<{ first_month: string; last_month: string; n_transactions: number; reconciliation: Record<string, number> } | null>(null);
@@ -142,70 +142,92 @@ export function PersonExpenses({ person, base }: { person: Person; base: Person 
   );
 }
 
-export function PersonGoals({ person, base }: { person: Person; base: Person }) {
+function goalTone(st: GoalStatus | undefined) {
+  if (!st) return { text: "", cls: "text-muted", bar: "bg-ink/60" };
+  if (st.met) return { text: "On track", cls: "text-good", bar: "bg-good" };
+  if (!st.in_horizon) return { text: "Beyond projection", cls: "text-muted", bar: "bg-ink/60" };
+  return { text: `${chf(st.shortfall_chf, { compact: true })} short`, cls: "text-warn", bar: "bg-warn" };
+}
+
+/** One partner's ordinary financial goals: safety buffer and savings targets. */
+export function PersonGoalsCard({ person, base, title }: { person: Person; base: Person; title?: boolean }) {
   const { setChange, viewer, draftPlan, idx } = useStore();
   const { current } = useDisplayed();
-  const [addingGoal, setAddingGoal] = useState(false);
-  const [addingBreak, setAddingBreak] = useState(false);
+  const [adding, setAdding] = useState(false);
   const pid = person.id;
-  const index = idx(pid);
-  const r = current?.people[index];
-  const home = current?.property;
+  const r = current?.people[idx(pid)];
   const start = draftPlan!.assumptions.start;
   const setGoals = (goals: Goal[]) => setChange(`people.${pid}.goals`, goals);
-  const setBreaks = (bs: CareerBreak[]) => setChange(`people.${pid}.career_breaks`, bs);
   return (
-    <>
-      {pid !== viewer && <p className="text-[13px] text-muted">{person.name} approves changes you suggest here.</p>}
-      <PlanSection title="Safety buffer">
-        <EditRow label="Keep at least" sub="Default is 6 months of current spending, rounded up to CHF 1,000." value={chf(person.emergency_floor)} changed={person.emergency_floor !== base.emergency_floor}>
-          <NumberField ariaLabel="Minimum safety buffer" value={person.emergency_floor} step={1000} width={170} onChange={(v) => setChange(`people.${pid}.emergency_floor`, v)} />
-        </EditRow>
-      </PlanSection>
-
-      <PlanSection title="Goals" action={!addingGoal && <button type="button" aria-label="Add goal" onClick={() => setAddingGoal(true)} className="flex items-center gap-1 text-[13px] font-medium text-accent"><Plus size={14} /> Add</button>}>
-        {person.goals.length === 0 && !addingGoal && <p className="py-3 text-[13px] text-muted">No goals yet.</p>}
-        {person.goals.map((g) => {
-          const st = r?.goals.find((x) => x.id === g.id);
-          return (
-            <EditRow key={g.id} label={g.name} sub={`${chf(st?.projected_chf)} projected · ${chf(g.target_chf)} target by ${monthLabel(g.target_date)}`}
-              value={st ? <span className={st.met ? "text-good" : st.in_horizon ? "text-warn" : "text-muted"}>{st.met ? "On track" : st.in_horizon ? `${chf(st.shortfall_chf)} short` : "Outside projection"}</span> : null}
-              changed={JSON.stringify(base.goals.find((x) => x.id === g.id)) !== JSON.stringify(g)}>
-              <GoalEditor goal={g} onSave={(ng) => setGoals(person.goals.map((x) => (x.id === g.id ? ng : x)))} onRemove={() => setGoals(person.goals.filter((x) => x.id !== g.id))} />
-            </EditRow>
-          );
-        })}
-        {addingGoal && (
-          <div className="pt-3">
-            <GoalEditor
-              goal={{ id: nextGoalId(person.goals), name: "", target_chf: 20000, target_date: addMonths(start, 36), priority: "medium", measure: "cash", source: "user" }}
-              onSave={(g) => { setGoals([...person.goals, g]); setAddingGoal(false); }}
-              onCancel={() => setAddingGoal(false)}
-            />
-          </div>
-        )}
-      </PlanSection>
-
-      <PlanSection title="Career breaks" action={!addingBreak && <button aria-label="Add career break" onClick={() => setAddingBreak(true)} className="flex items-center gap-1 text-[13px] font-medium text-accent"><Plus size={14} /> Add</button>}>
-        {person.career_breaks.length === 0 && !addingBreak && <p className="py-3 text-[13px] text-muted">No career breaks planned.</p>}
-        {person.career_breaks.map((b) => (
-          <EditRow key={b.id} label={`${b.label} · ${b.months} months`} sub={`From ${monthLabel(b.start)}${b.income_pct ? `, ${b.income_pct}% income` : ", no income"}`}
-            value={b.one_off_cost_chf ? chf(b.one_off_cost_chf, { compact: true }) : null} changed={JSON.stringify(base.career_breaks) !== JSON.stringify(person.career_breaks)}>
-            <BreakEditor value={b} min={start} onSave={(nb) => setBreaks(person.career_breaks.map((x) => (x.id === b.id ? nb : x)))} onRemove={() => setBreaks(person.career_breaks.filter((x) => x.id !== b.id))} />
+    <section className="min-w-0 rounded-2xl border border-line bg-white px-4 pt-4 pb-2 sm:px-5">
+      <div className="mb-1 flex items-center justify-between gap-3">
+        {title ? (
+          <h3 className="flex items-center gap-2 text-[15px] font-semibold text-ink">
+            <Avatar name={person.name} index={idx(pid)} size={24} />{person.name}
+          </h3>
+        ) : <h3 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-muted">Your goals</h3>}
+        {!adding && <button type="button" aria-label={`Add goal for ${person.name}`} onClick={() => setAdding(true)}
+          className="flex items-center gap-1 text-[13px] font-medium text-accent"><Plus size={14} /> Add goal</button>}
+      </div>
+      {pid !== viewer && <p className="text-[12px] text-muted">{person.name} approves changes you suggest here.</p>}
+      <EditRow label="Safety buffer" sub="Cash to keep at all times. Default: 6 months of spending." value={chf(person.emergency_floor)}
+        changed={person.emergency_floor !== base.emergency_floor}>
+        <NumberField ariaLabel={`${person.name}'s minimum safety buffer`} value={person.emergency_floor} step={1000} width={170}
+          onChange={(v) => setChange(`people.${pid}.emergency_floor`, v)} />
+      </EditRow>
+      {person.goals.map((g) => {
+        const st = r?.goals.find((x) => x.id === g.id);
+        const tone = goalTone(st);
+        return (
+          <EditRow key={g.id} label={g.name}
+            sub={<span className="block">
+              <span className="tnum">{chf(g.target_chf)} by {monthLabel(g.target_date)}{st ? ` · ${chf(st.projected_chf, { compact: true })} projected` : ""}</span>
+              {st && <span className="mt-1.5 block h-1 max-w-[240px] overflow-hidden rounded-full bg-page ring-1 ring-line/60">
+                <span className={clsx("block h-full rounded-full", tone.bar)} style={{ width: `${Math.max(0, Math.min(1, st.progress)) * 100}%` }} />
+              </span>}
+            </span>}
+            value={<span className={clsx("text-[13px]", tone.cls)}>{tone.text}</span>}
+            changed={JSON.stringify(base.goals.find((x) => x.id === g.id)) !== JSON.stringify(g)}>
+            <GoalEditor goal={g} onSave={(ng) => setGoals(person.goals.map((x) => (x.id === g.id ? ng : x)))} onRemove={() => setGoals(person.goals.filter((x) => x.id !== g.id))} />
           </EditRow>
-        ))}
-        {addingBreak && (
-          <div className="pt-3">
-            <BreakEditor value={newCareerBreak(person, start)} min={start}
-              onSave={(b) => { setBreaks([...person.career_breaks, b]); setAddingBreak(false); }} onCancel={() => setAddingBreak(false)} />
-          </div>
-        )}
-      </PlanSection>
+        );
+      })}
+      {person.goals.length === 0 && !adding && <p className="py-3 text-[13px] text-muted">No savings goals yet.</p>}
+      {adding && (
+        <div className="py-3">
+          <GoalEditor
+            goal={{ id: nextGoalId(person.goals), name: "", target_chf: 20000, target_date: addMonths(start, 36), priority: "medium", measure: "cash", source: "user" }}
+            onSave={(g) => { setGoals([...person.goals, g]); setAdding(false); }}
+            onCancel={() => setAdding(false)}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
 
-      {home && <PlanSection title={pid === viewer ? "Your share of the home" : `${person.name}’s share of the home`}>
-        <EditRow label="Upfront contribution" sub={monthLabel(home.purchase)} value={chf(home.contributions[index])} />
-      </PlanSection>}
-    </>
+/** Career breaks stay available as a supporting plan item in each partner's own view. */
+export function PersonCareerBreaks({ person, base }: { person: Person; base: Person }) {
+  const { setChange, draftPlan } = useStore();
+  const [adding, setAdding] = useState(false);
+  const start = draftPlan!.assumptions.start;
+  const setBreaks = (bs: CareerBreak[]) => setChange(`people.${person.id}.career_breaks`, bs);
+  return (
+    <PlanSection title="Career breaks" action={!adding && <button aria-label="Add career break" onClick={() => setAdding(true)} className="flex items-center gap-1 text-[13px] font-medium text-accent"><Plus size={14} /> Add</button>}>
+      {person.career_breaks.length === 0 && !adding && <p className="py-3 text-[13px] text-muted">No career breaks planned.</p>}
+      {person.career_breaks.map((b) => (
+        <EditRow key={b.id} label={`${b.label} · ${b.months} months`} sub={`From ${monthLabel(b.start)}${b.income_pct ? `, ${b.income_pct}% income` : ", no income"}`}
+          value={b.one_off_cost_chf ? chf(b.one_off_cost_chf, { compact: true }) : null} changed={JSON.stringify(base.career_breaks) !== JSON.stringify(person.career_breaks)}>
+          <BreakEditor value={b} min={start} onSave={(nb) => setBreaks(person.career_breaks.map((x) => (x.id === b.id ? nb : x)))} onRemove={() => setBreaks(person.career_breaks.filter((x) => x.id !== b.id))} />
+        </EditRow>
+      ))}
+      {adding && (
+        <div className="pt-3">
+          <BreakEditor value={newCareerBreak(person, start)} min={start}
+            onSave={(b) => { setBreaks([...person.career_breaks, b]); setAdding(false); }} onCancel={() => setAdding(false)} />
+        </div>
+      )}
+    </PlanSection>
   );
 }
 

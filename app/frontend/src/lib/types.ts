@@ -316,7 +316,7 @@ export interface Proposal {
   author: string;
   title: string;
   note: string;
-  kind: "manual" | "recommendation" | "assistant" | "restore";
+  kind: "manual" | "recommendation" | "assistant" | "restore" | "decision";
   changes: Change[];
   described: DescribedChange[];
   approvals: Record<string, "pending" | "approved" | "rejected">;
@@ -342,6 +342,123 @@ export interface Workspace {
   proposals: Proposal[];
   llm_available: boolean;
   child_defaults: { child: Child; first_day_tariff: number };
+  decisions: DecisionSummary[];
+}
+
+// ---------------------------------------------------------------- life decisions (converge/decisions.py)
+
+export type DecisionId = "move-in" | "buy-home" | "have-child" | (string & {});
+export type DecisionStatus = "not_started" | "in_progress" | "proposed" | "in_plan";
+
+export interface DecisionSummary {
+  id: DecisionId;
+  title: string;
+  promise: string;
+  status: DecisionStatus;
+  headline: string | null;
+  progress: { done: number; total: number };
+  proposal_id: string | null;
+}
+
+export type QuestionKind = "month" | "chf" | "share" | "choice" | "partner" | "number" | "bool" | "text";
+export type AnswerSource = "answer" | "plan" | "suggested" | "assumption" | "data";
+
+export interface DecisionQuestion {
+  id: string;
+  kind: QuestionKind;
+  label: string;
+  prompt: string;
+  stage: "intention" | "couple" | "details";
+  group: "decision" | "responsibilities" | "priorities" | "assumptions";
+  help: string;
+  per_partner: boolean;
+  topic: string;
+  options: { value: string; label: string; stance: "flexible" | "firm" | null }[];
+  min: number | null;
+  max: number | null;
+  step: number | null;
+  unit: string;
+  decimals: number;
+  applies: boolean;
+  // plan questions
+  value?: unknown;
+  value_text?: string;
+  source?: AnswerSource;
+  by?: string | null;
+  amount_base?: number | null;
+  // personal preference questions
+  answers?: Record<string, { value: unknown; text: string }>;
+}
+
+export interface BriefItem {
+  id: string;
+  group: DecisionQuestion["group"];
+  label: string;
+  value_text: string;
+  source: AnswerSource;
+  by: string | null;
+}
+
+export interface DecisionBrief {
+  title: string;
+  summary: string;
+  items: BriefItem[];
+  partners: {
+    id: string;
+    name: string;
+    summary: string | null;
+    complete: boolean;
+    preferences: { id: string; topic: string; value: unknown; text: string | null; stance: "flexible" | "firm" | null }[];
+  }[];
+  flexible: string[];
+  firm: string[];
+  differences: string[];
+  missing: string[];
+  uncertain: string[];
+  limits: string[];
+}
+
+export interface DecisionTurn {
+  mode: "llm" | "offline";
+  provider?: LlmProvider;
+  model?: string;
+  extracted: { question_id: string; label: string; value_text: string }[];
+  rejected: string[];
+  ambiguities: string[];
+  notice?: string;
+}
+
+export interface DecisionState {
+  module: { id: DecisionId; title: string; promise: string };
+  status: DecisionStatus;
+  active: boolean;
+  stage: "intention" | "couple" | "review";
+  questions: DecisionQuestion[];
+  next: { id: string; prompt: string; source: "llm" | "deterministic" } | null;
+  pending: string[];
+  ready: boolean;
+  progress: { done: number; total: number };
+  brief: DecisionBrief;
+  changes: Change[];
+  described: DescribedChange[];
+  approvers: string[];
+  errors: string[];
+  adjustments: Change[];
+  proposal: { id: string; status: Proposal["status"]; approvals: Proposal["approvals"]; author: string; title: string; outdated: boolean } | null;
+  updated_at: string | null;
+  updated_by: string | null;
+  llm_available: boolean;
+  turn?: DecisionTurn;
+}
+
+export interface DecisionStepIn {
+  viewer: string;
+  answers?: Record<string, unknown>;
+  preferences?: Record<string, unknown>;
+  adjustments?: Change[];
+  text?: string;
+  focus?: string;
+  ask_next?: boolean;
 }
 
 export interface AssumptionRow {
