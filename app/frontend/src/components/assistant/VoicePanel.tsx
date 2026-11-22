@@ -76,8 +76,12 @@ export function VoicePanel({ person }: { person: string }) {
 
   async function start() {
     if (!status?.enabled || connection.current) return;
-    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-      setNotice("The microphone needs HTTPS or localhost.");
+    if (!window.isSecureContext) {
+      setNotice(`The microphone needs a secure page. This page is ${window.location.origin}; open it over https:// (or on localhost) instead.`);
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setNotice("This browser doesn't offer microphone access here. Open the page directly in Safari or Chrome, not inside another app.");
       return;
     }
     const current: Connection = { abort: new AbortController() };
