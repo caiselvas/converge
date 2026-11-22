@@ -152,7 +152,7 @@ class Shared(Model):
 class Assumptions(Model):
     start: Month = "2027-01"
     horizon_months: int = Field(72, ge=12, le=120)
-    tax_rate: float = Field(0.13, ge=0, le=0.6, description="Income tax as share of net income (not in ledger)")
+    tax_rate: float = Field(0.0, ge=0, le=0.6, description="Optional extra deduction as a share of net income")
     expense_inflation: float = Field(0.008, ge=-0.05, le=0.2)
     income_growth: float = Field(0.008, ge=-0.1, le=0.2)
     investment_return: float = Field(0.03, ge=-0.5, le=0.5)

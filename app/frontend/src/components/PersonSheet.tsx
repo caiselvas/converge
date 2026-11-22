@@ -4,7 +4,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api } from "@/lib/api";
-import { addMonths, chf, monthLabel, num } from "@/lib/format";
+import { addMonths, chf, monthLabel, num, pct } from "@/lib/format";
 import { useDisplayed, useStore } from "@/lib/store";
 import type { CareerBreak, Goal, Person } from "@/lib/types";
 import { EditRow, Sheet, SheetSection } from "./Sheet";
@@ -20,7 +20,7 @@ function Provenance({ pid }: { pid: string }) {
     <p className="text-[12.5px] leading-5 text-muted">
       Estimated from {num(l.n_transactions)} UBS synthetic transactions ({monthLabel(l.first_month)} – {monthLabel(l.last_month)}). The ledger
       reconciles with the reported balances to CHF {l.reconciliation.max_abs_error_balance_chain_chf.toFixed(2)}. Fixed bills use the last 12 months,
-      variable spending the full period; irregular costs are kept as a monthly provision. Income tax is not in the ledger and is an explicit assumption.
+      variable spending the full period; irregular costs are kept as a monthly provision. Salary transactions reflect net pay.
     </p>
   );
 }
@@ -75,9 +75,9 @@ function PersonBody({ person, base, idx }: { person: Person; base: Person; idx: 
   const [addingBreak, setAddingBreak] = useState(false);
   const pid = person.id;
   const r = current?.people[idx];
-  const tax = draftPlan?.assumptions.tax_rate ?? 0;
+  const extraDeduction = draftPlan?.assumptions.tax_rate ?? 0;
   const spending = person.categories.reduce((s, c) => s + c.budget_monthly, 0);
-  const saving = person.income_monthly * (1 - tax) - spending;
+  const saving = person.income_monthly * (1 - extraDeduction) - spending;
   const start = draftPlan?.assumptions.start ?? "2027-01";
 
   const setGoals = (goals: Goal[]) => setChange(`people.${pid}.goals`, goals);
@@ -93,7 +93,7 @@ function PersonBody({ person, base, idx }: { person: Person; base: Person; idx: 
         <div>
           <div className="text-[12px] text-muted">Saves per month</div>
           <div className={clsx("tnum mt-0.5 text-[22px] font-semibold tracking-tight", saving < 0 && "text-bad-strong")}>{chf(saving)}</div>
-          <div className="text-[11.5px] text-muted">after {Math.round(tax * 100)}% tax estimate</div>
+          {extraDeduction > 0 && <div className="text-[11.5px] text-muted">after {pct(extraDeduction, 1)} extra deduction</div>}
         </div>
         {r && (
           <div>

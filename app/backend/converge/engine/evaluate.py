@@ -62,9 +62,7 @@ def _drivers(res: SimResult, pi: int, upto: int) -> list[dict]:
             out[lbl] = out.get(lbl, 0.0) + amt
     lost = sum(max(0.0, s.usual_income[t] - s.income[t]) for t in range(upto + 1))
     if lost > 1:
-        # Tax is proportional to income, so the net loss is income minus the tax not paid.
-        tax_saved = lost * res.plan.assumptions.tax_rate
-        out["Income paused (career break), after tax"] = lost - tax_saved
+        out["Income lost during career break"] = lost * (1 - res.plan.assumptions.tax_rate)
     housing = sum(s.housing[t] for t in range(upto + 1))
     if housing > 1:
         out["Mortgage interest & maintenance"] = housing
@@ -191,7 +189,7 @@ def evaluate(plan: Plan, res: SimResult | None = None) -> dict:
                     title="Home fails the indicative affordability test",
                     detail=(
                         (f"Imputed costs of {chf(aff['annual_cost'])}/year are {aff['ratio'] * 100:.1f}% of combined usual "
-                         f"net income; banks typically accept at most {aff['max_ratio'] * 100:.0f}%. "
+                         f"net income, above Converge's {aff['max_ratio'] * 100:.0f}% limit. "
                          f"Highest price passing this test: about {chf(aff['max_price'])}.")
                         if aff["ratio"] is not None else
                         f"With no regular income, imputed costs of {chf(aff['annual_cost'])}/year cannot be carried."

@@ -15,20 +15,20 @@ All amounts are CHF. The time step is one calendar month, and flows are booked a
 | Liabilities | `synthetic-liabilities.csv` | Snapshot. Treated as interest-only when the data has no payment (the demo profiles have none) |
 | Goals | `synthetic-goals.csv` | Target amount by date |
 
-The ledger contains **no tax payments**, so income tax is an explicit, editable assumption (default 13% of net income). This is a rough effective rate for a single taxpayer in Zurich at this income level, not a tax calculation. Unmarried partners are taxed individually.
+Salary transactions are treated as **net pay** because they closely match the UBS profile field `reference_monthly_net_income_chf`. The optional extra deduction defaults to 0% and can be set to model an additional outflow proportional to net pay.
 
 ## 2. Monthly transition (per partner *i*)
 
 ```
 income_i   = usual_income_i · (1+g)^(t/12) · break_factor_i(t)     (+ bonus/12 if enabled)
-tax_i      = τ · income_i
+deduct_i   = τ · income_i                                         optional extra deduction (default 0%)
 spending_i = (personal budgets + own-home budgets if not cohabiting) · (1+π)^(t/12)
 household_i= share_i(t) · (shared rent* + utilities + groceries) · (1+π)^(t/12)  (+ moving cost once)
 housing_i  = own_i · (mortgage_t · r_m/12 + value_t · m/12)        interest + maintenance (expenses)
 amort_i    = own_i · min(mortgage_t, A)                              principal repayment (not an expense)
 deposit_i  = own_i · d · price      (purchase month; cash → equity)
 fees_i     = own_i · f · price      (purchase month; expense)
-cash_i[t]  = cash_i[t-1] + income − tax − spending − household − housing − amort − loans − one-offs − deposit + cash interest
+cash_i[t]  = cash_i[t-1] + income − deduct − spending − household − housing − amort − loans − one-offs − deposit + cash interest
 ```
 
 \* Shared rent stops once the home is owned.
@@ -45,12 +45,12 @@ cash_i[t]  = cash_i[t-1] + income − tax − spending − household − housing
 | Constraint | Type | Rule |
 |---|---|---|
 | Safety buffer | **hard** | Each partner's cash ≥ their minimum in every month (default: 6 months of current spending, rounded up; editable) |
-| Indicative affordability | **hard** | (mortgage · 5% + value · 1% + required amortisation) ≤ 1/3 of income. Gross income is not in the data, so Converge uses **net** income, which is stricter. Labelled as an indication, *not* a lender assessment |
+| Indicative affordability | **hard** | Annual costs (mortgage · 5% + value · 1% + required amortisation) must fit within one third of combined usual annual **net** income, before career breaks or any optional extra deduction. The lender benchmark uses gross income |
 | Minimum deposit | **schema** | ≥ 20% (Swiss lending practice) |
 | Personal goals | soft | Funded in priority order (then by date), so the same franc never counts twice. "Emergency savings" is measured on cash, other goals on cash + investments |
 | Home by target date | soft | The purchase month is ≤ the shared target |
 
-Every violation reports the partner, the first and worst month, the shortfall, and its **drivers**: deposit, fees, income lost to a break (after tax), break costs, moving costs, mortgage interest and maintenance, amortisation.
+Every violation reports the partner, the first and worst month, the shortfall, and its **drivers**: deposit, fees, income lost to a break (after any optional extra deduction), break costs, moving costs, mortgage interest and maintenance, amortisation.
 
 **Future optionality** is reported as the *tightest runway*: at the worst month, how many months of recurring costs cash alone could cover.
 
@@ -76,15 +76,15 @@ Listed in-app (`···` → *Assumptions & sources*) and in `app/backend/converg
 - Inflation 0.8% (SNB, 24 Sep 2026); cash interest 0% (SNB policy rate 0%).
 - Mortgage rate 1.8% illustrative (BWO average mortgage rate 1.31%, reference rate 1.25%).
 - 20% minimum deposit, 5% imputed rate, 1% maintenance, one-third affordability rule, 15-year amortisation to 2/3 (UBS and Credit Suisse mortgage guides).
-- Illustrative: tax rate 13%, income growth 0.8%, investment return 3%, purchase fees 1%, shared rent CHF 3,400, no property appreciation.
+- Illustrative defaults include an extra deduction of 0%, income growth of 0.8%, an investment return of 3%, purchase fees of 1%, shared rent of CHF 3,400 and flat property prices.
 
 ## 7. Limitations
 
 - Synthetic data only. It is not representative of the Swiss population, and the relationship between the two profiles is assumed.
-- Tax is a flat illustrative rate. There is no tax lag, wealth tax, pillar 2/3a, or tax effects of marriage or home ownership (imputed rental value).
+- The optional extra deduction is a flat percentage of net pay. The model omits tax lag, wealth tax, pillar 2/3a and the tax effects of marriage or home ownership.
 - Deterministic single path, with no Monte Carlo. Sensitivity is explored through stress tests.
 - Investment portfolios are a single snapshot with a constant assumed return, and are never sold to fund a deposit.
-- The affordability check is an indication based on net income, not a lender decision.
+- The affordability check gives an indication using combined usual net income. A lender makes its own assessment using gross income.
 - The recommendation search is bounded (single levers and pairs). Larger restructurings must be made by the user.
 - Identity is simulated by switching between partners; there is no authentication.
 - The live LLM path was verified for request shape and error fallback, but not run with a valid key in this environment.

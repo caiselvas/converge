@@ -27,7 +27,7 @@ function headline(ev: Evaluation): { title: string; sub: string; issue: Issue | 
     const a = ev.property?.affordability;
     return {
       title: "The home fails the affordability check.",
-      sub: a?.ratio ? `Housing costs would be ${pct(a.ratio, 1)} of income; banks accept about ${pct(a.max_ratio)}. A price up to ${chf(a.max_price)} would pass.` : hard.detail,
+      sub: a?.ratio ? `Imputed housing costs would be ${pct(a.ratio, 1)} of your combined usual net income. This check uses a ${pct(a.max_ratio)} limit. A price up to ${chf(a.max_price)} would pass.` : hard.detail,
       issue: hard,
     };
   }

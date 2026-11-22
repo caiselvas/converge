@@ -203,8 +203,8 @@ def simulate(plan: Plan) -> SimResult:
             mort = pr.price - deposit_total
             second = max(0.0, mort - a.second_mortgage_ltv * pr.price)
             amort_monthly = second / (a.amortization_years * 12) if pr.amortize else 0.0
-            # Indicative affordability test (bank practice), using usual NET income
-            # because gross income is not in the dataset (net < gross => conservative).
+            # The indicative check uses normal combined ledger net income before
+            # career breaks and any optional extra deduction.
             annual_income = sum(usual) * 12
             imputed = mort * a.imputed_rate
             maint_aff = pr.price * 0.01
@@ -241,7 +241,7 @@ def simulate(plan: Plan) -> SimResult:
             c = comp[i]
             s.cash_open.append(cash[i])
             income = actual[i]
-            tax = a.tax_rate * income
+            tax = a.tax_rate * income  # Optional extra deduction from ledger net income.
             spending = c["personal_budget"] * infl + (0.0 if cohabit else c["own_home_budget"] * infl)
             household = shares[i] * (hh_cost + moving)
             transfers[i] = household

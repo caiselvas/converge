@@ -46,9 +46,9 @@ def registry(plan: Plan) -> list[dict]:
              note="Snapshot dated 2025-01-01 (no investment transactions in the ledger); grown at the assumed return from Jan 2027."),
         dict(id="relationship", name="Nina and Emil as a couple", value=None, unit=None, kind="illustrative", source=None,
              note="Two unrelated synthetic profiles linked as a hypothetical couple for the demonstration."),
-        dict(id="tax_rate", name="Income tax", value=a.tax_rate, unit="share of net income", kind="illustrative", source=None,
-             note="The ledger contains no tax payments, so tax is modelled explicitly. Rough effective rate for a single "
-                  "taxpayer in Zurich at this income; not a tax calculation. Unmarried partners are taxed individually."),
+        dict(id="tax_rate", name="Optional extra deduction", value=a.tax_rate, unit="share of net income", kind="illustrative", source=None,
+             note="Salary transactions reflect net pay. The default extra deduction is 0%. Set a positive rate to model "
+                  "additional deductions from that pay."),
         dict(id="expense_inflation", name="Inflation (applied to spending and rent)", value=a.expense_inflation, unit="per year",
              kind="official", source="snb_sep2026", note="Latest observed CPI inflation reported by the SNB, held constant."),
         dict(id="income_growth", name="Income growth", value=a.income_growth, unit="per year", kind="illustrative", source=None,
@@ -74,10 +74,10 @@ def registry(plan: Plan) -> list[dict]:
              source="cs_affordability", note="Banks test affordability at a notional ~5% rate, not the actual rate."),
         dict(id="maintenance", name="Maintenance and ancillary costs", value=pr.maintenance_pct, unit="of value per year",
              kind="official", source="cs_affordability", note="1% of property value per year (flat rate used by lenders)."),
-        dict(id="affordability", name="Affordability limit", value=a.affordability_max_ratio, unit="of income", kind="official",
+        dict(id="affordability", name="Affordability limit", value=a.affordability_max_ratio, unit="of usual net income", kind="illustrative",
              source="cs_affordability",
-             note="Housing costs ≤ 1/3 of GROSS income. Gross income is not in the dataset; Converge applies the test to "
-                  "net income, which is stricter. This is an indication, not a lender assessment."),
+             note="The lender benchmark uses gross income. Converge applies the threshold to combined usual net pay "
+                  "before career breaks and any optional extra deduction. The result is indicative."),
         dict(id="amortization", name="Amortisation", value=a.amortization_years, unit="years", kind="official", source="ubs_mortgage",
              note="Second mortgage (above 2/3 of value) repaid within 15 years; modelled as direct monthly amortisation."),
         dict(id="fees", name="Purchase fees", value=pr.fees_pct, unit="of price", kind="illustrative", source=None,

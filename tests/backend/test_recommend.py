@@ -58,7 +58,7 @@ def test_recommendations_do_not_mutate_input(simple_plan):
 
 
 def test_demo_conflict_has_alternatives(demo_plan):
-    brk = [dict(id="cb1", start="2028-01", months=6, income_pct=0, one_off_cost_chf=8000)]
+    brk = [dict(id="cb1", start="2028-01", months=12, income_pct=0, one_off_cost_chf=8000)]
     plan = apply_changes(demo_plan, [C("shared.household.enabled", True), C("shared.property.enabled", True),
                                      C("people.P00809.career_breaks", brk)])
     ev = evaluate(plan)

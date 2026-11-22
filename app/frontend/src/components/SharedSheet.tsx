@@ -81,7 +81,7 @@ function Body({ plan, base }: { plan: Plan; base: Plan }) {
             )}
             {aff && (
               <div className="flex items-baseline justify-between py-3 text-[14px]">
-                <span className="flex items-center gap-1">Affordability <InfoTip content="Bank practice: 5% imputed interest + 1% maintenance + amortisation ≤ ⅓ of gross income. Gross income is not in the data, so net income is used (stricter). An indication, not a lender decision." /></span>
+                <span className="flex items-center gap-1">Affordability <InfoTip content="Converge compares imputed interest, maintenance and required amortisation with combined usual net pay before career breaks and any optional extra deduction. Lenders use gross income for their assessment." /></span>
                 <span className={clsx("tnum font-medium", aff.passes ? "text-good" : "text-bad-strong")}>
                   {pct(aff.ratio, 1)} <span className="font-normal text-muted">of max {pct(aff.max_ratio)}</span>
                 </span>

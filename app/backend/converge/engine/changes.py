@@ -69,7 +69,7 @@ LEVERS: list[Lever] = [
     Lever("shared.property.maintenance_pct", "Maintenance", "rate", "shared"),
     Lever("shared.property.amortize", "Amortise directly", "bool", "shared"),
     Lever("shared.property.target_date", "Home target date", "month", "shared"),
-    Lever("assumptions.tax_rate", "Income tax (share of net income)", "rate", "assumption"),
+    Lever("assumptions.tax_rate", "Extra deduction (share of net income)", "rate", "assumption"),
     Lever("assumptions.expense_inflation", "Inflation", "rate", "assumption"),
     Lever("assumptions.income_growth", "Income growth", "rate", "assumption"),
     Lever("assumptions.investment_return", "Investment return", "rate", "assumption"),
