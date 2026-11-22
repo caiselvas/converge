@@ -43,7 +43,9 @@ def test_opening_a_decision_does_not_change_the_plan(client):
     before = client.get("/api/workspace").json()
     state = client.get("/api/decisions/buy-home?viewer=A").json()
     assert state["stage"] == "intention" and state["next"]["id"] == "price"
-    assert not state["ready"]
+    # Every plan question has a default, so the couple can compare straight away.
+    assert state["ready"] and state["essentials"] == [["price"], ["purchase"], ["ownership_share_first"]]
+    assert len(state["essentials"]) <= 3
     after = client.get("/api/workspace").json()
     assert after["plan"] == before["plan"] and after["versions"] == before["versions"]
 

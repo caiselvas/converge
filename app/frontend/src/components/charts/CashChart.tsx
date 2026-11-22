@@ -54,7 +54,7 @@ export function CashChart({ current, base, metric = "cash", height = 320, only, 
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 8, right: 56, bottom: 0, left: 0 }}>
           <CartesianGrid vertical={false} stroke="#eef0f3" />
-          <XAxis dataKey="m" ticks={ticks} tickFormatter={(m) => (m.endsWith("-01") ? m.slice(0, 4) : "")} tick={{ fontSize: 11.5, fill: "#64748b" }} axisLine={{ stroke: "#e5e7eb" }} tickLine={false} interval={0} />
+          <XAxis dataKey="m" ticks={ticks} tickFormatter={(m) => (m.endsWith("-01") ? m.slice(0, 4) : "")} tick={{ fontSize: 12, fill: "#64748b" }} axisLine={{ stroke: "#e5e7eb" }} tickLine={false} interval="preserveStartEnd" minTickGap={14} />
           <YAxis domain={[lo, hi]} ticks={yTicks} tickFormatter={(v) => chfShort(v)} tick={{ fontSize: 11.5, fill: "#64748b" }} axisLine={false} tickLine={false} width={46} />
           {showEvents &&
             breaks.map((e, k) => (

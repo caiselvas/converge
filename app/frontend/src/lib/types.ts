@@ -28,7 +28,59 @@ export interface CareerBreak {
   months: number;
   income_pct: number;
   one_off_cost_chf: number;
+  semester_fee_chf?: number;
+  study_program?: ProgramId | null;
+  post_study_pay_delta_chf?: number;
   label: string;
+}
+
+export type ProgramId = "quant_finance" | "fine_arts";
+
+export interface IncomeStep {
+  id: string;
+  start: Month;
+  monthly_chf_delta: number;
+  label: string;
+}
+
+/** Paired engine comparison returned by the finance assistant's what-if tools (engine/what_if.py). */
+export interface WhatIfLine {
+  id: string;
+  name: string;
+  cash_floor: number | null;
+  minimum_cash: number;
+  minimum_cash_month: Month;
+  end_cash: number;
+  end_net_worth: number;
+  buffer_gap: number | null;
+  change_in_minimum_cash?: number;
+  change_in_end_net_worth?: number;
+}
+
+export interface WhatIfResult {
+  start: Month;
+  end: Month;
+  baseline: WhatIfLine[];
+  scenario: WhatIfLine[];
+  checks_passed: boolean;
+  issues: { title: string; person: string | null; severity: "hard" | "soft" }[];
+  speakable?: string;
+}
+
+/** Illustrative uncertainty on matched random scenarios (engine/what_if.py `_risk`). */
+export interface RiskSummary {
+  option_id: string;
+  title: string;
+  people: string[];
+  trials: number;
+  seed: number;
+  inflation_spread: number;
+  investment_volatility: number;
+  baseline_breaches: number[];
+  scenario_breaches: number[];
+  baseline_worth: number[];
+  scenario_worth: number[];
+  paired_worth_delta: number[];
 }
 
 export interface Person {
@@ -45,6 +97,10 @@ export interface Person {
   opening_cash_date: Month;
   investments: number;
   investments_as_of: string;
+  income_tax_monthly: number;
+  pension_opening_chf: number;
+  pension_credit_monthly: number;
+  income_steps: IncomeStep[];
   liabilities: { id: string; kind: string; principal_chf: number }[];
   categories: Category[];
   emergency_floor: number;
@@ -228,7 +284,7 @@ export interface PlanEvent {
 }
 
 export type SeriesKey =
-  | "cash" | "investments" | "investment_sale" | "net_worth" | "income" | "family_allowance" | "tax" | "spending" | "household"
+  | "cash" | "investments" | "investment_sale" | "pension" | "net_worth" | "income" | "family_allowance" | "tax" | "spending" | "household"
   | "housing" | "amortization" | "one_off" | "deposit" | "net_flow" | "property_value" | "mortgage";
 
 export interface Evaluation {
@@ -451,6 +507,31 @@ export interface DecisionState {
   updated_by: string | null;
   llm_available: boolean;
   turn?: DecisionTurn;
+  /** At most three groups of question ids that are enough to start comparing. */
+  essentials: string[][];
+  summary: string[];
+  headline: string;
+  options: DecisionUserOption[];
+  max_options: number;
+}
+
+export interface DecisionUserOption {
+  id: string;
+  label: string;
+  answers: Record<string, unknown>;
+  summary?: string[];
+  headline?: string;
+  error?: string | null;
+}
+
+export interface MemoryHint {
+  id: number;
+  key: string;
+  field: string;
+  value: string | number | null;
+  status: "pending" | "confirmed" | "rejected";
+  quote: string | null;
+  suggestion: { question_id: string; value: unknown; value_text: string; label: string; personal: boolean } | null;
 }
 
 export interface DecisionStepIn {
@@ -498,33 +579,49 @@ export interface ExplainResponse {
   notice?: string;
 }
 
+export interface ComparisonColumn {
+  id: string;
+  title: string;
+  kind: "yours" | "option" | "variant" | "fix";
+  summary: string[];
+  overrides: Record<string, unknown>;
+  changes: Change[];
+  raw_changes: Change[];
+  primary_lever: string | null;
+  safe: boolean;
+  issue: string | null;
+  soft_issues: string[];
+  net_worth: number[];
+  end_net_worth: number;
+  event: Month | null;
+  people: {
+    id: string;
+    name: string;
+    safe: boolean;
+    min_cash: number;
+    min_cash_month: string;
+    floor: number;
+    headroom: number;
+    cash: number[];
+    breaches: number[];
+    goals: { name: string; reached_month: string | null; slip_months: number | null }[];
+  }[];
+  home: { month: string; delay_months: number; in_horizon: boolean } | null;
+  robustness: { mortgage: StressLimit | null; income: StressLimit };
+  respects: string[];
+  asks: string[];
+  labels: { id: "safest" | "soonest" | "wealth" | "preferences"; text: string; detail: string }[];
+  deltas: { end_net_worth: number; min_cash: Record<string, number>; event_months: number | null } | null;
+  tradeoff: string | null;
+}
+
 export interface DecisionComparison {
   months: string[];
   evaluated: number;
   mortgage_rate: number | null;
-  columns: {
-    id: string;
-    title: string;
-    primary_lever: string | null;
-    raw_changes: Change[];
-    safe: boolean;
-    issue: string | null;
-    net_worth: number[];
-    people: {
-      id: string;
-      name: string;
-      safe: boolean;
-      min_cash: number;
-      min_cash_month: string;
-      floor: number;
-      cash: number[];
-      breaches: number[];
-      goals: { name: string; reached_month: string | null; slip_months: number | null }[];
-    }[];
-    home: { month: string; delay_months: number; in_horizon: boolean } | null;
-    robustness: { mortgage: StressLimit | null; income: StressLimit };
-    respects: string[];
-    asks: string[];
-  }[];
+  notice: string | null;
+  end_month: Month;
+  event_label: string;
+  columns: ComparisonColumn[];
 }
 export type StressLimit = { kind: "unsafe" | "cap" | "threshold"; value: number };

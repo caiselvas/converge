@@ -39,6 +39,10 @@ class Lever:
 
 LEVERS: list[Lever] = [
     Lever("people.{pid}.categories.{key}.budget_monthly", "{category}", "CHF/month", "person", "Monthly budget for a spending category"),
+    Lever("people.{pid}.income_steps", "Future net income changes", "income_steps", "person", "User-assumed CHF/month deltas from dated start months"),
+    Lever("people.{pid}.income_tax_monthly", "Income tax budget outside payroll", "CHF/month", "person"),
+    Lever("people.{pid}.pension_opening_chf", "Vested pension at plan start", "CHF", "person"),
+    Lever("people.{pid}.pension_credit_monthly", "Occupational pension credit", "CHF/month", "person"),
     Lever("people.{pid}.income_monthly", "Net income", "CHF/month", "person", "Usual monthly net income"),
     Lever("people.{pid}.include_bonus", "Count observed bonus", "bool", "person"),
     Lever("people.{pid}.emergency_floor", "Minimum safety buffer", "CHF", "person", "Hard floor for personal cash"),
@@ -51,6 +55,8 @@ LEVERS: list[Lever] = [
     Lever("people.{pid}.career_breaks.{bid}.months", "Career break length", "months", "person"),
     Lever("people.{pid}.career_breaks.{bid}.income_pct", "Income during break", "%", "person"),
     Lever("people.{pid}.career_breaks.{bid}.one_off_cost_chf", "Career break costs", "CHF", "person"),
+    Lever("people.{pid}.career_breaks.{bid}.semester_fee_chf", "Fees per semester", "CHF", "person"),
+    Lever("people.{pid}.career_breaks.{bid}.post_study_pay_delta_chf", "Net pay change after study", "CHF/month", "person"),
     Lever("shared.household.enabled", "Live together", "bool", "shared"),
     Lever("shared.household.move_in", "Move-in date", "month", "shared"),
     Lever("shared.household.rent", "Shared rent", "CHF/month", "shared"),
@@ -204,6 +210,9 @@ def format_value(unit: str, v: Any) -> str:
         return f"{int(v)} months"
     if unit == "bool":
         return "On" if v else "Off"
+    if unit == "income_steps" and isinstance(v, list):
+        return "; ".join(f"{step['label']} · {format_value('CHF/month', step['monthly_chf_delta'])} from {M.label(step['start'])}"
+                         for step in v) or "None"
     if unit == "children" and isinstance(v, list):
         return "; ".join(
             f"{child.label} · {M.label(child.birth)} · {child.childcare_days_per_week:g} Kita days/week"

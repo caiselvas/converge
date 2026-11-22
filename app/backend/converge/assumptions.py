@@ -81,6 +81,8 @@ def registry(plan: Plan) -> list[dict]:
                   "additional deductions from that pay."),
         dict(id="expense_inflation", name="Inflation (applied to spending and rent)", value=a.expense_inflation, unit="per year",
              kind="official", source="snb_sep2026", note="Latest observed CPI inflation reported by the SNB, held constant."),
+        dict(id="income_steps", name="Future changes to net income", value=None, unit=None, kind="illustrative",
+             source=None, note="User-supplied monthly net income changes from a chosen start date. These are scenario assumptions, not measured effects of education, promotion or a job change."),
         dict(id="income_growth", name="Income growth", value=a.income_growth, unit="per year", kind="illustrative", source=None,
              note="Set equal to inflation (flat real income)."),
         dict(id="investment_return", name="Investment return", value=a.investment_return, unit="per year", kind="illustrative",

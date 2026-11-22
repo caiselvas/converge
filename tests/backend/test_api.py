@@ -1,9 +1,13 @@
 """API request validation and the end-to-end flow."""
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
 from converge import api
+from converge import config
 from converge.store import Store
+from converge.voice import routes
 
 
 @pytest.fixture
@@ -39,6 +43,66 @@ def test_invalid_changes_return_422(client, change):
 def test_malformed_body_422(client):
     assert client.post("/api/simulate", json={"changes": "nope"}).status_code == 422
     assert client.post("/api/proposals", json={"author": "A", "changes": []}).status_code == 422
+
+
+def test_agent_runs_real_comparison_and_replaces_ungrounded_reply(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(config, "AGENT_PROVIDER", "openai")
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "fake")
+    turns = []
+
+    async def complete(_http, _provider, history):
+        turns.append(history.copy())
+        if len(turns) == 1:
+            return {"tool_calls": [{"type": "function", "id": "first", "function": {
+                "name": "explore_what_if", "arguments": '{"housing":{"arrangement":"together"}}',
+            }}]}
+        if len(turns) == 2:
+            return {"content": "Ben will have CHF 9999999."}
+        return {"content": "Which costs feel negotiable?"}
+
+    monkeypatch.setattr(routes, "complete", complete)
+    session = client.post("/api/twin/session", json={"person": "A"}).json()["session_id"]
+    response = client.post("/api/twin/chat", json={"session_id": session, "text": "What if we move in?"})
+    assert response.status_code == 200
+    reply = response.json()
+    assert "9999999" not in reply["text"] and "Ben's lowest month-end cash" in reply["text"]
+    assert reply["comparisons"][0]["checks_passed"] and not reply["draft_changes"]
+    direct = client.post(
+        "/api/what-if", json={"housing": {"arrangement": "together"}}
+    ).json()["scenario"]
+    assert reply["comparisons"][0]["scenario"] == [
+        {key: value for key, value in line.items() if key not in {"cash", "net_worth"}} for line in direct
+    ]
+    assert client.post("/api/twin/chat", json={"session_id": session, "text": "Help with that."}).status_code == 200
+    assert any(turn["content"] == reply["text"] for turn in turns[-1] if turn["role"] == "assistant")
+    assert not client.get("/api/workspace").json()["plan"]["shared"]["household"]["enabled"]
+
+
+def test_agent_streams_education_tool_and_recovers_to_a_specific_question(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(config, "AGENT_PROVIDER", "openai")
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "fake")
+
+    async def complete(_http, _provider, history):
+        if history[-1]["role"] == "tool":
+            return {"content": "Budget CHF 9876543 for the programme."}
+        return {"tool_calls": [{"type": "function", "id": "first", "function": {
+            "name": "education_programs", "arguments": "{}",
+        }}]}
+
+    monkeypatch.setattr(routes, "complete", complete)
+    session = client.post("/api/twin/session", json={"person": "A"}).json()["session_id"]
+    body = {"session_id": session, "text": "I want to start a master."}
+    with client.stream("POST", "/api/twin/chat/stream", json=body) as response:
+        events = [json.loads(line) for line in response.iter_lines()]
+    assert [event["type"] for event in events] == ["tool", "tool", "reply"]
+    assert [event["status"] for event in events[:2]] == ["running", "done"]
+    assert events[0]["id"] == events[1]["id"] and events[0]["name"] == "education_programs"
+    assert "Which programme are you considering?" in events[-1]["text"]
+    assert "9876543" not in events[-1]["text"]
+    memory = client.get("/api/twin/memory", params={"person": "A"}).json()["memory"]
+    assert any(item["key"] == "masters.stated_goal" for item in memory)
 
 
 def test_proposal_flow(client):

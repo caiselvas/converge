@@ -4,17 +4,20 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 
-  --color-page: #f5f6f8;
+  /* Surfaces: a calm off-white page, white cards, hairline borders. */
+  --color-page: #f4f5f7;
   --color-surface: #ffffff;
-  --color-line: #e5e7eb;
-  --color-line-strong: #d4d8de;
-  --color-ink: #0f172a;
-  --color-ink-2: #334155;
-  --color-muted: #64748b;
-  --color-subtle: #94a3b8;
+  --color-sunken: #eef0f3;
+  --color-line: #e4e7ec;
+  --color-line-strong: #d0d5dd;
+  --color-ink: #101828;
+  --color-ink-2: #344054;
+  --color-muted: #5d6b82;
+  --color-subtle: #8a97ab;
 
   --color-brand: #0b3b60;
-  --color-accent: #0e7c86;
+  --color-accent: #0b7480;
+  --color-accent-soft: #e6f3f4;
 
   /* Partner colours (by position, not name) */
   --color-p0: #3d5bd9;
@@ -23,17 +26,30 @@
   --color-p1-soft: #e7f6f4;
   --color-shared: #475569;
 
-  --color-good: #047857;
-  --color-good-soft: #e8f6ef;
-  --color-warn: #b45309;
-  --color-warn-soft: #fdf4e3;
-  --color-bad: #c2410c;
-  --color-bad-strong: #b91c1c;
-  --color-bad-soft: #fdeeea;
+  /* Comparison options: the couple's own options are solid, engine alternatives dashed. */
+  --color-o0: #101828;
+  --color-o1: #2f6fe4;
+  --color-o2: #8b5cf6;
+  --color-o3: #d9467a;
+  --color-o4: #0f9b8e;
+  --color-o5: #c98a0a;
+  --color-o6: #6b7a90;
+
+  --color-good: #067647;
+  --color-good-soft: #e9f6ef;
+  --color-warn: #b54708;
+  --color-warn-soft: #fdf3e2;
+  --color-bad: #c4320a;
+  --color-bad-strong: #b42318;
+  --color-bad-soft: #fdeeec;
+
+  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.04), 0 1px 3px rgb(16 24 40 / 0.03);
+  --shadow-raised: 0 8px 28px rgb(16 24 40 / 0.08), 0 2px 6px rgb(16 24 40 / 0.04);
 }
 
 html {
   background: var(--color-page);
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -41,10 +57,19 @@ body {
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .tnum {
   font-variant-numeric: tabular-nums;
+}
+
+/* Horizontal option strips scroll without a visible bar on touch devices. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 /* Range input */
@@ -58,24 +83,24 @@ input[type="range"].range {
 }
 input[type="range"].range::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: #fff;
   border: 2px solid var(--range-color, var(--color-ink));
-  box-shadow: 0 1px 3px rgb(15 23 42 / 0.15);
+  box-shadow: 0 1px 3px rgb(16 24 40 / 0.18);
   cursor: pointer;
 }
 input[type="range"].range::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: #fff;
   border: 2px solid var(--range-color, var(--color-ink));
   cursor: pointer;
 }
 input[type="range"].range:focus-visible::-webkit-slider-thumb {
-  box-shadow: 0 0 0 4px rgb(14 124 134 / 0.25);
+  box-shadow: 0 0 0 4px rgb(11 116 128 / 0.25);
 }
 
 /* Hide number spinners */

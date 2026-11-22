@@ -147,6 +147,7 @@ def interpret(plan: Plan, text: str, viewer: str) -> dict:
 
 def _call_structured(
     provider: config.Provider, model: str, system: str, user: str, output: type[Output], max_tokens: int,
+    *, usage: list[tuple[int, int]] | None = None,
 ) -> Output:
     schema = output.model_json_schema()
     client = _client(provider)
@@ -160,6 +161,8 @@ def _call_structured(
             model=model, max_tokens=max_tokens, system=system,
             messages=[{"role": "user", "content": user}], output_config=output_config, **options,
         )
+        if usage is not None and response.usage is not None:
+            usage.append((response.usage.input_tokens, response.usage.output_tokens))
         if response.stop_reason != "end_turn":
             raise IncompleteResponse
         text = "".join(block.text for block in response.content if block.type == "text")
@@ -170,6 +173,8 @@ def _call_structured(
             text={"format": {"type": "json_schema", "name": output.__name__, "schema": schema, "strict": True}},
             **options,
         )
+        if usage is not None and response.usage is not None:
+            usage.append((response.usage.input_tokens, response.usage.output_tokens))
         if response.status != "completed":
             raise IncompleteResponse
         text = response.output_text

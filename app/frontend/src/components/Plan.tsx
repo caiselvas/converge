@@ -5,9 +5,9 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { CashChart, ChartLegend } from "./charts/CashChart";
-import { Decisions, StressTag } from "./Decisions";
+import { InPlanDecisions, StressTag } from "./Decisions";
 import { decisionHref } from "./decisions/registry";
-import { Segmented, Skeleton, clsx } from "./ui";
+import { Avatar, Segmented, Skeleton, clsx } from "./ui";
 import { api, llmProviderLabel } from "@/lib/api";
 import { chf, monthLabel, pct } from "@/lib/format";
 import { scopedHref, scopedIssues, useDisplayed, useStore } from "@/lib/store";
@@ -226,6 +226,46 @@ function Hero({ ev, base }: { ev: Evaluation; base: Evaluation | null }) {
   );
 }
 
+/** The figures a couple checks first: today, the tightest moment ahead, and where the plan leads. */
+function KeyFigures({ ev }: { ev: Evaluation }) {
+  const { scopedPerson, idx } = useStore();
+  const end = ev.months[ev.months.length - 1];
+  const people = ev.people.filter((p) => !scopedPerson || p.id === scopedPerson.id);
+  const tile = "min-w-0 rounded-2xl border border-line bg-white p-4 shadow-card";
+  const worth = scopedPerson ? people[0].end_net_worth : ev.household.net_worth[ev.household.net_worth.length - 1];
+  const worthNow = scopedPerson ? people[0].start_net_worth : ev.people.reduce((sum, p) => sum + p.start_net_worth, 0);
+  return (
+    <section aria-label="Key figures" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className={tile}>
+        <p className="text-[12.5px] font-medium text-muted">{scopedPerson ? "Net worth" : "Household net worth"} · {monthLabel(end)}</p>
+        <p className="tnum mt-1 text-[22px] leading-tight font-semibold tracking-tight">{chf(worth, { compact: true })}</p>
+        <p className="tnum mt-0.5 text-[12.5px] text-muted">{chf(worthNow, { compact: true })} today</p>
+      </div>
+      {people.map((p) => (
+        <div key={p.id} className={tile}>
+          <p className="flex items-center gap-1.5 text-[12.5px] font-medium text-muted"><Avatar name={p.name} index={idx(p.id)} size={16} />{p.name} · lowest cash ahead</p>
+          <p className={clsx("tnum mt-1 text-[22px] leading-tight font-semibold tracking-tight", p.breach && "text-bad-strong")}>{chf(p.min_cash, { compact: true })}</p>
+          <p className={clsx("tnum mt-0.5 text-[12.5px]", p.breach ? "text-bad-strong" : "text-muted")}>
+            {monthLabel(p.min_cash_month)} · {p.breach ? `${chf(-p.headroom, { compact: true })} below` : `${chf(p.headroom, { compact: true })} above`} buffer
+          </p>
+        </div>
+      ))}
+      {people.length === 1 && <div className={tile}>
+        <p className="text-[12.5px] font-medium text-muted">Saved per month, on average</p>
+        <p className="tnum mt-1 text-[22px] leading-tight font-semibold tracking-tight">{chf(people[0].avg_monthly_saving)}</p>
+        <p className="tnum mt-0.5 text-[12.5px] text-muted">Cash today {chf(people[0].start_cash, { compact: true })}</p>
+      </div>}
+      <div className={tile}>
+        <p className="text-[12.5px] font-medium text-muted">Goals on track</p>
+        <p className="tnum mt-1 text-[22px] leading-tight font-semibold tracking-tight">
+          {people.flatMap((p) => p.goals).filter((g) => g.met || !g.in_horizon).length} of {people.flatMap((p) => p.goals).length}
+        </p>
+        <p className="mt-0.5 text-[12.5px] text-muted">{missedGoals(ev, scopedPerson?.id).length ? `${missedGoals(ev, scopedPerson?.id).length} at risk` : "None at risk"}</p>
+      </div>
+    </section>
+  );
+}
+
 export function PlanView() {
   const { draft, scopedPerson, idx, simError, stress } = useStore();
   const { current, base } = useDisplayed();
@@ -240,13 +280,12 @@ export function PlanView() {
   const editing = draft.length > 0;
   const cmp = editing || Object.keys(stress).length ? base : null;
   return (
-    <div className="space-y-5 sm:space-y-6">
+    <div className="space-y-4 sm:space-y-5">
       <div>
         <Hero ev={current} base={editing ? base : null} />
-        {simError && <p role="alert" className="mt-2 text-[13px] text-bad-strong">{simError}</p>}
-        <div className="mt-3"><Decisions /></div>
+        {simError && <p role="alert" className="mt-2 text-[14px] text-bad-strong">{simError}</p>}
       </div>
-      <section aria-label="Projection" className="rounded-2xl border border-line bg-white px-2 pt-4 pb-4 sm:px-5 sm:pt-5">
+      <section aria-label="Projection" className="rounded-2xl border border-line bg-white px-2 pt-4 pb-4 shadow-card sm:px-5 sm:pt-5">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-3 px-3 sm:px-1">
           <ChartLegend names={current.people.map((p) => p.name)} only={only} showBase={!!cmp} showFloor={metric === "cash"}
             showBreak={current.events.some((e) => e.kind === "career_break" && (!scopedPerson || e.person === scopedPerson.id))} />
@@ -254,6 +293,8 @@ export function PlanView() {
         </div>
         <CashChart current={current} base={cmp} only={only} metric={metric} showFloors={metric === "cash"} height={320} />
       </section>
+      <KeyFigures ev={current} />
+      <InPlanDecisions />
     </div>
   );
 }

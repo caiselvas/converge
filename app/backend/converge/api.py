@@ -18,8 +18,11 @@ from converge.engine.changes import ChangeError, apply_changes, describe, format
 from converge.engine.comparison import compare, with_stress
 from converge.engine.evaluate import evaluate
 from converge.engine.recommend import recommend
+from converge.engine.what_if import GRADUATE_SURVEY, PROGRAMS, WhatIf, compare as what_if_compare
 from converge.models import KITA_INFANT_TARIFF, Change, Child, ParentalLeave, Plan
 from converge.store import Store, WorkflowError, normalise
+from converge.voice.realtime import router_for as voice_router
+from converge.voice.routes import router_for as twin_router
 
 logging.basicConfig(level=logging.INFO)
 
@@ -33,6 +36,29 @@ app.add_middleware(
 )
 
 store = Store()
+
+
+def _decision_facts(mid: str) -> dict | None:
+    """Compact engine facts about the decision on screen, for the finance assistant."""
+    if mid not in D.MODULES:
+        return None
+    m = D.MODULES[mid]
+    try:
+        result = _comparison(m, store.plan, store.decision_session(mid), None)
+    except HTTPException:
+        return None
+    return dict(decision=m.title, horizon_end=result["end_month"], provenance="simulated", options=[
+        dict(id=c["id"], title=c["title"], inputs=c["summary"], safe=c["safe"], issue=c["issue"],
+             household_net_worth_at_end=round(c["end_net_worth"]), labels=[label["text"] for label in c["labels"]],
+             tradeoff_vs_your_plan=c["tradeoff"],
+             people=[dict(name=p["name"], lowest_cash=round(p["min_cash"]), lowest_cash_month=p["min_cash_month"],
+                          safety_buffer=round(p["floor"]), headroom=round(p["headroom"])) for p in c["people"]])
+        for c in result["columns"]
+    ])
+
+
+app.include_router(twin_router(lambda: store.plan, decision_context=lambda mid: _decision_facts(mid)))
+app.include_router(voice_router(lambda: store.plan))
 
 
 class StressIn(BaseModel):
@@ -49,6 +75,10 @@ class ChangesIn(BaseModel):
     base: Literal["current", "original"] = "current"
     include_base: bool = True
     stress: StressIn | None = None
+
+
+class WhatIfIn(WhatIf):
+    draft: list[Change] = Field(default_factory=list, max_length=200)
 
 
 class ProposalIn(BaseModel):
@@ -86,6 +116,28 @@ class DecisionStepIn(BaseModel):
 
 
 class CompareIn(BaseModel):
+    stress: StressIn | None = None
+
+
+class OptionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str = Field("", max_length=60)
+    answers: dict[str, Any] = Field(default_factory=dict)
+
+
+class OptionsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    viewer: str
+    options: list[OptionIn] = Field(default_factory=list, max_length=D.MAX_USER_OPTIONS)
+
+
+class UncertaintyIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    option_id: str
     stress: StressIn | None = None
 
 
@@ -193,6 +245,19 @@ def _decision_summary(m: D.DecisionModule) -> dict:
     return D.summary(m, store.plan, session, _linked_proposal(session) if session else None)
 
 
+def _changes_differ(plan: Plan, proposed: list[dict], current: list[dict]) -> bool:
+    """Compare two change sets by the values they produce, so equivalent encodings
+    (for example a list entry with or without defaulted fields) count as equal."""
+    if {c["path"] for c in proposed} != {c["path"] for c in current}:
+        return True
+    try:
+        a = apply_changes(plan, [Change(path=c["path"], value=c["value"]) for c in proposed])
+        b = apply_changes(plan, [Change(path=c["path"], value=c["value"]) for c in current])
+    except ChangeError:
+        return True
+    return json.dumps(a.model_dump(), sort_keys=True, default=str) != json.dumps(b.model_dump(), sort_keys=True, default=str)
+
+
 def _decision_state(m: D.DecisionModule, viewer: str, turn: dict | None = None) -> dict:
     plan = store.plan
     if viewer not in [p.id for p in plan.people]:
@@ -200,9 +265,7 @@ def _decision_state(m: D.DecisionModule, viewer: str, turn: dict | None = None) 
     session = store.decision_session(m.id)
     out = D.state(m, plan, session, viewer, _linked_proposal(session))
     if out["proposal"]:
-        proposed = {c["path"]: c["value"] for c in out["proposal"].pop("changes")}
-        current = {c["path"]: c["value"] for c in out["changes"]}
-        out["proposal"]["outdated"] = json.dumps(proposed, sort_keys=True, default=str) != json.dumps(current, sort_keys=True, default=str)
+        out["proposal"]["outdated"] = _changes_differ(plan, out["proposal"].pop("changes"), out["changes"])
     if turn is not None:
         if turn.get("next") and out["next"] and turn["next"]["id"] == out["next"]["id"]:
             out["next"] = turn["next"]
@@ -243,11 +306,7 @@ def decision_step(mid: str, body: DecisionStepIn):
     return _decision_state(m, body.viewer, turn)
 
 
-def _comparison(m: D.DecisionModule, plan: Plan, session: D.DecisionSession, stress: StressIn | None):
-    changes, errors = D.compile_changes(m, plan, session)
-    if errors:
-        raise HTTPException(422, errors[0])
-    candidate = _apply(plan, changes)
+def _preferences_for(m: D.DecisionModule, plan: Plan, session: D.DecisionSession, candidate: Plan) -> dict:
     home = store.decision_session("buy-home")
     prefs = {key: value for key, value in home.preferences.items()
              if candidate.shared.property.enabled and key in ("date_flex", "budget_flex")}
@@ -255,8 +314,21 @@ def _comparison(m: D.DecisionModule, plan: Plan, session: D.DecisionSession, str
     prefs.update({q.id: {pid: answer for pid, answer in session.preferences.get(q.id, {}).items()
                          if D._answers_for(q, values, pid)}
                   for q in m.questions if q.per_partner and session.preferences.get(q.id)})
+    return prefs
+
+
+def _comparison(m: D.DecisionModule, plan: Plan, session: D.DecisionSession, stress: StressIn | None):
     try:
-        return compare(candidate, prefs, stress.model_dump(exclude_none=True) if stress else None)
+        values, mine, own, variants = D.candidates(m, plan, session)
+    except (D.AnswerError, ChangeError) as e:
+        raise HTTPException(422, str(e)) from None
+    prefs = _preferences_for(m, plan, session, mine)
+    stated = {pid for answers in prefs.values() for pid in answers}
+    try:
+        return compare(plan, own, variants, preferences=prefs,
+                       stress=stress.model_dump(exclude_none=True) if stress else None,
+                       event_label=m.event_label, preference_label=len(stated) == len(plan.people),
+                       event_of=lambda candidate: m.event(candidate, values))
     except ChangeError as e:
         raise HTTPException(422, str(e)) from None
 
@@ -264,6 +336,51 @@ def _comparison(m: D.DecisionModule, plan: Plan, session: D.DecisionSession, str
 @app.post("/api/decisions/{mid}/compare")
 def decision_compare(mid: str, body: CompareIn):
     return _comparison(_decision_module(mid), store.plan, store.decision_session(mid), body.stress)
+
+
+@app.put("/api/decisions/{mid}/options")
+def decision_options(mid: str, body: OptionsIn):
+    """Replace the couple's extra options for this decision. Nothing reaches the plan."""
+    m = _decision_module(mid)
+    session = store.decision_session(mid)
+    try:
+        D.set_options(m, store.plan, session, body.viewer, [o.model_dump() for o in body.options])
+    except (D.AnswerError, ValueError) as e:
+        raise HTTPException(422, str(e)) from None
+    store.save_decision_session(session)
+    return _decision_state(m, body.viewer)
+
+
+@app.post("/api/decisions/{mid}/uncertainty")
+def decision_uncertainty(mid: str, body: UncertaintyIn):
+    """Illustrative spread for one option against the agreed plan, on matched random scenarios.
+
+    Runs on request only. It varies inflation and investment returns around documented
+    assumptions; it is not a probability of success.
+    """
+    from converge.engine.what_if import Uncertainty, _risk
+
+    m = _decision_module(mid)
+    plan = store.plan
+    comparison = _comparison(m, plan, store.decision_session(mid), body.stress)
+    column = next((c for c in comparison["columns"] if c["id"] == body.option_id), None)
+    if column is None:
+        raise HTTPException(404, "This option is no longer in the comparison.")
+    option_plan = _apply(plan, [Change.model_validate(ch) for ch in column["changes"]])
+    stress = body.stress.model_dump(exclude_none=True) if body.stress else {}
+    risk = _risk((with_stress(plan, stress), with_stress(option_plan, stress)), Uncertainty())
+    return dict(option_id=column["id"], title=column["title"], people=[p.name for p in plan.people], **risk)
+
+
+@app.get("/api/decisions/{mid}/memory")
+def decision_memory(mid: str, viewer: str):
+    """The viewer's own discovery notes relevant to this decision. Never the partner's."""
+    from converge.voice.routes import memory_db
+
+    m = _decision_module(mid)
+    if viewer not in [p.id for p in store.plan.people]:
+        raise HTTPException(422, "unknown viewer")
+    return dict(hints=D.memory_hints(m, store.plan, viewer, memory_db().items(viewer)))
 
 
 @app.post("/api/decisions/{mid}/propose")
@@ -285,30 +402,37 @@ def decision_propose(mid: str, body: DecisionProposeIn):
         if not changes:
             raise HTTPException(422, "This decision is not part of your agreed plan.")
     else:
+        if body.author not in [p.id for p in plan.people]:
+            raise HTTPException(422, "unknown partner")
         values, _ = D.resolve(m, plan, session)
-        open_plan = [q for q in D.pending(m, plan, session, body.author, values) if not q.per_partner]
-        if open_plan:
-            raise HTTPException(422, f"Answer “{D._render(open_plan[0].label, plan)}” before proposing.")
         changes, errors = D.compile_changes(m, plan, session, values)
         if errors:
             raise HTTPException(422, errors[0])
+        title = body.title or f"{m.title}: {m.headline(plan, values)}"
         if body.option_id is not None:
             comparison = _comparison(m, plan, session, body.stress)
             option = next((c for c in comparison["columns"] if c["id"] == body.option_id), None)
             if not option or not option["safe"]:
                 raise HTTPException(422, "Choose an option that is safe under the current comparison.")
-            option_changes = [Change.model_validate(ch) for ch in option["raw_changes"]]
-            if option_changes:
+            if option["id"] != "your-plan":
                 from converge.store import diff_plans
 
-                chosen = _apply(_apply(plan, changes), option_changes)
+                # The chosen option becomes the couple's plan for this decision.
+                chosen = _apply(plan, [Change.model_validate(ch) for ch in option["changes"]])
                 changes = diff_plans(plan, chosen)
-                D.absorb(m, plan, session, body.author, changes)
-                title = body.title or option["title"]
-            else:
+                try:
+                    if option["overrides"]:
+                        D.apply_answers(m, plan, session, body.author, option["overrides"], {})
+                    if option["kind"] == "fix":
+                        D.absorb(m, plan, session, body.author, changes)
+                except (D.AnswerError, ChangeError) as e:
+                    raise HTTPException(422, str(e)) from None
+                session.options = [o for o in session.options if o.id != option["id"]]
+                values, _ = D.resolve(m, plan, session)
+                compiled, errors = D.compile_changes(m, plan, session, values)
+                if not errors and _apply(plan, compiled) == chosen:
+                    changes = compiled  # the proposal then matches the session exactly
                 title = body.title or f"{m.title}: {m.headline(plan, values)}"
-        else:
-            title = body.title or f"{m.title}: {m.headline(plan, values)}"
         if not changes:
             raise HTTPException(422, "This already matches your agreed plan.")
     brief = D.state(m, plan, session, body.author)["brief"]
@@ -353,6 +477,21 @@ def simulate_endpoint(body: ChangesIn):
 def recommendations(body: ChangesIn):
     plan = _apply(_base(body.base), body.changes)
     return recommend(_with_stress(plan, body.stress))
+
+
+@app.get("/api/what-if")
+def what_if_catalogue():
+    return {"programs": PROGRAMS, "graduate_survey": GRADUATE_SURVEY}
+
+
+@app.post("/api/what-if")
+def what_if(body: WhatIfIn):
+    try:
+        return what_if_compare(_apply(store.plan, body.draft), body)
+    except KeyError:
+        raise HTTPException(422, "Choose a person in this workspace.") from None
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from None
 
 
 @app.post("/api/proposals")

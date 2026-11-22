@@ -27,7 +27,8 @@ from pydantic import BaseModel, Field
 
 from converge.engine import months as M
 from converge.engine.changes import ChangeError, apply_changes, describe, format_value, get_value
-from converge.models import MONTH_RE, Change, Child, ParentalLeave, Plan
+from converge.engine.what_if import PROGRAMS
+from converge.models import MONTH_RE, STUDY_SEMESTERS, Change, Child, ParentalLeave, Plan
 
 Kind = Literal["month", "chf", "share", "choice", "partner", "number", "bool", "text"]
 Stage = Literal["intention", "couple", "details"]
@@ -43,6 +44,17 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+MAX_USER_OPTIONS = 3  # in addition to the couple's own plan, so four user options in total
+
+
+class UserOption(BaseModel):
+    """A manually configured alternative: the couple's answers with a few of them overridden."""
+
+    id: str = Field(pattern=r"^opt-[0-9]{1,3}$")
+    label: str = Field("", max_length=60)
+    answers: dict[str, Any] = {}
+
+
 class DecisionSession(BaseModel):
     """A couple's in-progress answers for one decision module."""
 
@@ -51,9 +63,20 @@ class DecisionSession(BaseModel):
     answered_by: dict[str, str] = {}
     preferences: dict[str, dict[str, Any]] = {}  # question id -> partner id -> value
     adjustments: list[Change] = []  # extra validated changes, e.g. from a verified alternative
+    options: list[UserOption] = []  # extra options the couple wants to compare
     proposal_id: str | None = None
     updated_at: str = Field(default_factory=_now)
     updated_by: str | None = None
+
+
+@dataclass(frozen=True)
+class Variant:
+    """A deterministic exploration candidate: a few answers changed to show a trade-off."""
+
+    id: str
+    title: str
+    overrides: dict[str, Any]
+    levers: tuple[str, ...]  # recommendation lever families, used for preference notes
 
 
 @dataclass(frozen=True)
@@ -110,6 +133,13 @@ class DecisionModule:
     headline: Callable[[Plan, Values], str]
     notes: Callable[[Plan, Values], list[str]]
     amount_base: Callable[[str, Values, dict | None], float | None] = lambda qid, v, ev: None
+    # At most three groups of inputs a couple needs to start comparing; everything else has defaults.
+    essentials: tuple[tuple[str, ...], ...] = ()
+    variants: Callable[[Plan, Values], list[Variant]] = lambda plan, v: []
+    # The month the decision happens in a candidate plan, for the "soonest" comparison.
+    event: Callable[[Plan, Values], str | None] = lambda plan, v: None
+    event_label: str = ""
+    memory_slugs: tuple[str, ...] = ()
 
     def question(self, qid: str) -> Question:
         for q in self.questions:
@@ -187,6 +217,27 @@ def _move_in_help(plan: Plan, ctx: dict) -> str:
             "From the move-in month, one shared rent replaces both.")
 
 
+def _step_round(x: float, step: float) -> float:
+    return max(step, round(x / step) * step)
+
+
+def _split_variant(plan: Plan, v: Values) -> Variant:
+    if v.get("split_mode") != "income":
+        return Variant("var-split", "Split costs by income", {"split_mode": "income"}, ("split",))
+    return Variant("var-split", "Split costs equally", {"split_mode": "equal"}, ("split",))
+
+
+def _move_in_variants(plan: Plan, v: Values) -> list[Variant]:
+    out = []
+    if v.get("rent"):
+        rent = _step_round(float(v["rent"]) * 0.85, 50)
+        out.append(Variant("var-rent", f"Rent {_chf(rent)}/month", {"rent": rent}, ("budget",)))
+    later = M.add(v["move_in"], 6)
+    out.append(Variant("var-later", f"Move in {M.label(later)}", {"move_in": later}, ("delay",)))
+    out.append(_split_variant(plan, v))
+    return out
+
+
 MOVE_IN = DecisionModule(
     id="move-in",
     title="Move in together",
@@ -242,6 +293,10 @@ MOVE_IN = DecisionModule(
         "Rent and shared costs grow with the plan's inflation assumption.",
         "Utilities and groceries start from your observed UBS spending; edit them if the new home differs.",
     ],
+    essentials=(("move_in",), ("rent",), ("split_mode", "custom_share_first")),
+    variants=_move_in_variants,
+    event=lambda plan, v: plan.shared.household.move_in if plan.shared.household.enabled else None,
+    event_label="Move-in",
 )
 
 
@@ -282,6 +337,24 @@ def _home_base(qid: str, v: Values, ev: dict | None) -> float | None:
     if qid == "ownership_share_first":
         return float(v["price"]) * (float(v["deposit_pct"]) + float(v["fees_pct"]))
     return None
+
+
+def _home_variants(plan: Plan, v: Values) -> list[Variant]:
+    a, b = plan.people
+    price = _step_round(float(v["price"]) * 0.85, 50_000)
+    later = M.add(v["purchase"], 12)
+    out = [
+        Variant("var-cheaper", f"{_chf(price)} home", {"price": price}, ("budget",)),
+        Variant("var-later", f"Buy in {M.label(later)}", {"purchase": later}, ("delay",)),
+    ]
+    by_income = round(a.income_monthly / max(1.0, a.income_monthly + b.income_monthly) / 0.05) * 0.05
+    current = float(v["ownership_share_first"])
+    share = by_income if abs(by_income - current) >= 0.05 else 0.5 if abs(current - 0.5) >= 0.05 else None
+    if share is not None:
+        share = round(min(0.95, max(0.05, share)), 2)
+        out.append(Variant("var-share", f"Deposit {a.name} {share:.0%} · {b.name} {1 - share:.0%}",
+                           {"ownership_share_first": share}, ("split",)))
+    return out
 
 
 BUY_HOME = DecisionModule(
@@ -399,6 +472,11 @@ BUY_HOME = DecisionModule(
         "Property value is held flat and the mortgage rate is illustrative. Use the stress test on Overview to try higher rates.",
         "Investments are not sold to fund the deposit. The deposit comes from cash.",
     ],
+    essentials=(("price",), ("purchase",), ("ownership_share_first",)),
+    variants=_home_variants,
+    event=lambda plan, v: plan.shared.property.purchase if plan.shared.property.enabled else None,
+    event_label="Home purchase",
+    memory_slugs=("home",),
 )
 
 
@@ -509,6 +587,24 @@ def _first(plan: Plan) -> str:
     return plan.people[0].id
 
 
+def _child_variants(plan: Plan, v: Values) -> list[Variant]:
+    later = M.add(v["birth"], 12)
+    days = float(v["childcare_days"])
+    fewer = days - 1 if days >= 2 else days + 1
+    out = [
+        Variant("var-later", f"Child in {M.label(later)}", {"birth": later}, ("delay",)),
+        Variant("var-care", f"{fewer:g} Kita day{'s' if fewer != 1 else ''} a week", {"childcare_days": fewer}, ("childcare",)),
+    ]
+    if v.get("extra_leave", "none") == "none":
+        pos = "first" if v["birth_parent"] == plan.people[0].id else "second"
+        name = plan.person(v["birth_parent"]).name
+        out.append(Variant("var-leave", f"{name} takes 6 more months at home",
+                           {"extra_leave": pos, "extra_leave_months": 6, "extra_leave_income": 0}, ("leave",)))
+    else:
+        out.append(Variant("var-leave", "Both return after statutory leave", {"extra_leave": "none"}, ("leave",)))
+    return out
+
+
 HAVE_CHILD = DecisionModule(
     id="have-child",
     title="Have a child",
@@ -605,6 +701,11 @@ HAVE_CHILD = DecisionModule(
     remove=_child_remove,
     headline=lambda plan, v: f"Child in {M.label(v['birth'])}, {float(v['childcare_days']):g} Kita days a week",
     notes=_child_notes,
+    essentials=(("birth",), ("childcare_days",), ("birth_parent", "extra_leave", "extra_leave_months", "extra_leave_income")),
+    variants=_child_variants,
+    event=lambda plan, v: _target_child(plan).birth if plan.shared.children else None,
+    event_label="Birth",
+    memory_slugs=("family",),
 )
 
 def _career_entry(plan: Plan, pid: str):
@@ -618,14 +719,29 @@ def _career_value(key: str, default):
     return suggest
 
 
+def _study(values: Values) -> str | None:
+    program = values.get("study_program") or "none"
+    return None if program == "none" else program
+
+
+def _break_months(values: Values) -> int:
+    program = _study(values)
+    return STUDY_SEMESTERS[program] * 6 if program else int(values["months"])
+
+
 def _career_compile(plan: Plan, values: Values) -> list[Change]:
     pid = values["person"]
     person = plan.person(pid)
     existing = _career_entry(plan, pid)
     bid = existing.id if existing else "planner-break"
-    entry = dict(id=bid, start=values["start"], months=int(values["months"]),
-                 income_pct=values["income_kept"] * 100, one_off_cost_chf=values["break_cost"],
-                 label=existing.label if existing else "Career break")
+    program = _study(values)
+    label = (PROGRAMS[program]["label"] if program
+             else existing.label if existing and not existing.study_program else "Career break")
+    entry = dict(id=bid, start=values["start"], months=_break_months(values),
+                 income_pct=values["income_kept"] * 100, one_off_cost_chf=values["break_cost"], label=label)
+    if program:
+        entry.update(study_program=program, semester_fee_chf=float(values["semester_fee"]),
+                     post_study_pay_delta_chf=float(values["post_study_delta"]))
     breaks = [entry if b.id == bid else b.model_dump() for b in person.career_breaks]
     if existing is None:
         breaks.append(entry)
@@ -639,24 +755,76 @@ def _support_changes(answer: str) -> list[Change]:
     return changes
 
 
+def _career_variants(plan: Plan, v: Values) -> list[Variant]:
+    out = []
+    if not _study(v) and int(v["months"]) >= 2:
+        months = max(1, int(v["months"]) // 2)
+        out.append(Variant("var-shorter", f"{months}-month break", {"months": months}, ("break_shorter",)))
+    later = M.add(v["start"], 12)
+    out.append(Variant("var-later", f"Start in {M.label(later)}", {"start": later}, ("break_later",)))
+    if float(v["income_kept"]) < 0.5:
+        out.append(Variant("var-part-time", "Keep 50% of pay (part-time)", {"income_kept": 0.5}, ("break_partial",)))
+    return out
+
+
+def _career_headline(plan: Plan, v: Values) -> str:
+    name = plan.person(v["person"]).name
+    if program := _study(v):
+        return f"{name} studies {PROGRAMS[program]['label']} from {M.label(v['start'])}"
+    return f"{name} takes {int(v['months'])} months from {M.label(v['start'])}"
+
+
+def _career_notes(plan: Plan, v: Values) -> list[str]:
+    if program := _study(v):
+        p = PROGRAMS[program]
+        return [
+            f"{p['label']} ({p['school']}): {p['semesters']} semesters at {_chf(p['semester_fee_chf'])} per semester, "
+            "taken from the programme's published fees.",
+            "Pay kept while studying and any pay change afterwards are your assumptions. A degree does not guarantee a salary.",
+        ]
+    return ["Income and one-off costs are based on the amounts you enter."]
+
+
+def _is_study(v: Values) -> bool:
+    return _study(v) is not None
+
+
 CAREER_BREAK = DecisionModule(
     id="career-break",
     title="Take a career break",
-    promise="Plan time away from work and see what it would take to keep both partners financially safe.",
+    promise="Plan time away from work or a study programme, and see what keeps both partners financially safe.",
     active=lambda plan: any(_career_entry(plan, p.id) for p in plan.people),
     questions=(
         Question("person", "partner", "Who takes the break", "Who is planning time away from work?",
                  "intention", "decision", suggest=lambda plan, v: next(
                      (p.id for p in plan.people if _career_entry(plan, p.id)), plan.people[1].id)),
+        Question("study_program", "choice", "Kind of break", "Is this time off or a study programme?",
+                 "intention", "decision",
+                 suggest=lambda plan, v: (getattr(_career_entry(plan, v["person"]), "study_program", None) or "none"),
+                 options=(Option("none", "Time off work", ("break", "sabbatical", "time off")),
+                          Option("quant_finance", "Quantitative Finance MSc · UZH / ETH", ("quant", "finance")),
+                          Option("fine_arts", "Fine Arts MA · ZHdK", ("fine arts", "art"))),
+                 help="Programme durations and fees come from the schools' published information."),
         Question("start", "month", "Break starts", "When would the break start?", "intention", "decision",
                  suggest=_career_value("start", lambda plan: M.add(plan.assumptions.start, 12))),
         Question("months", "number", "Break length", "How many months would you take?", "intention", "decision",
+                 applies=lambda v: not _is_study(v),
                  suggest=_career_value("months", lambda plan: 12), min=1, max=36, step=1, unit="months", integer=True),
         Question("income_kept", "share", "Income kept", "How much of your usual net pay would you keep during the break?",
                  "intention", "decision", suggest=lambda plan, v: _career_value("income_pct", lambda plan: 0)(plan, v) / 100,
                  min=0, max=1, step=0.05),
-        Question("break_cost", "chf", "One-off costs", "What would you pay at the start, such as course fees?",
-                 "intention", "decision", suggest=_career_value("one_off_cost_chf", lambda plan: 0), min=0, step=100),
+        Question("break_cost", "chf", "One-off costs", "What would you pay at the start, such as course fees or travel?",
+                 "details", "assumptions", suggest=_career_value("one_off_cost_chf", lambda plan: 0), min=0, step=100),
+        Question("semester_fee", "chf", "Fees per semester", "Tuition per semester",
+                 "details", "assumptions", applies=_is_study, min=0, max=100_000, step=50,
+                 suggest=lambda plan, v: (_career_entry(plan, v["person"]).semester_fee_chf
+                                          if _career_entry(plan, v["person"]) and _career_entry(plan, v["person"]).study_program
+                                          == _study(v) else PROGRAMS[_study(v)]["semester_fee_chf"] if _study(v) else 0),
+                 help="Published fee, paid at the start and every six months during the programme."),
+        Question("post_study_delta", "chf", "Net pay change after study", "Monthly net pay change after the programme",
+                 "details", "assumptions", applies=_is_study, min=-50_000, max=50_000, step=100, unit="/month",
+                 suggest=_career_value("post_study_pay_delta_chf", lambda plan: 0),
+                 help="Hypothetical. Enter a change only if you expect one; a degree does not guarantee a higher salary."),
         Question("why_break", "text", "Why it matters", "What would this break give you?",
                  "couple", "priorities", per_partner=True, topic="Why it matters", role="taker"),
         Question("break_date_flex", "choice", "Break timing", "Could you start the break later?",
@@ -675,8 +843,13 @@ CAREER_BREAK = DecisionModule(
     ),
     compile=_career_compile,
     remove=lambda plan: [],
-    headline=lambda plan, v: f"{plan.person(v['person']).name} takes {int(v['months'])} months from {M.label(v['start'])}",
-    notes=lambda plan, v: ["Income and one-off costs are based on the amounts you enter."],
+    headline=_career_headline,
+    notes=_career_notes,
+    essentials=(("person", "study_program"), ("start", "months"), ("income_kept",)),
+    variants=_career_variants,
+    event=lambda plan, v: getattr(_career_entry(plan, v["person"]), "start", None),
+    event_label="Break starts",
+    memory_slugs=("sabbatical", "masters", "education"),
 )
 
 
@@ -830,6 +1003,181 @@ def _friendly(error: str) -> str:
     return error.replace("invalid plan after changes: ", "")
 
 
+def with_overrides(session: DecisionSession, overrides: dict[str, Any]) -> DecisionSession:
+    """A throwaway copy of the session with some answers replaced (an option or variant)."""
+    copy = session.model_copy(deep=True)
+    copy.answers.update(overrides)
+    return copy
+
+
+def option_plan(m: DecisionModule, plan: Plan, session: DecisionSession, overrides: dict[str, Any]
+                ) -> tuple[Values, list[Change], list[str]]:
+    """Values and validated changes for the couple's answers with ``overrides`` applied."""
+    s = with_overrides(session, overrides)
+    values, _ = resolve(m, plan, s)
+    changes, errors = compile_changes(m, plan, s, values)
+    return values, changes, errors
+
+
+def _clean_overrides(m: DecisionModule, plan: Plan, answers: dict[str, Any]) -> dict[str, Any]:
+    out = {}
+    for qid, value in answers.items():
+        q = m.question(qid)
+        if q.per_partner:
+            raise AnswerError(f"{_render(q.label, plan)} is a personal preference, not part of an option.")
+        value = coerce(q, value, plan)
+        if value is not None:
+            out[qid] = value
+    return out
+
+
+def set_options(m: DecisionModule, plan: Plan, session: DecisionSession, viewer: str, options: list[dict]) -> None:
+    """Replace the couple's extra options. Each must compile to a valid plan on its own."""
+    if viewer not in [p.id for p in plan.people]:
+        raise AnswerError("unknown partner")
+    if len(options) > MAX_USER_OPTIONS:
+        raise AnswerError(f"Compare up to {MAX_USER_OPTIONS + 1} options of your own.")
+    parsed = []
+    for raw in options:
+        option = UserOption.model_validate(raw)
+        option.answers = _clean_overrides(m, plan, option.answers)
+        _, _, errors = option_plan(m, plan, session, option.answers)
+        if errors:
+            raise AnswerError(f"{option.label or 'This option'}: {errors[0]}")
+        parsed.append(option)
+    if len({o.id for o in parsed}) != len(parsed):
+        raise AnswerError("Option ids must be unique.")
+    session.options = parsed
+    session.updated_at = _now()
+    session.updated_by = viewer
+
+
+def candidates(m: DecisionModule, plan: Plan, session: DecisionSession):
+    """The couple's plan, their extra options and the module's deterministic variants, as comparison candidates.
+
+    Returns ``(values, your_plan, own_candidates, variant_candidates)``. Raises
+    ``AnswerError`` when the couple's own plan does not compile.
+    """
+    from converge.engine.comparison import Candidate
+
+    values, changes, errors = option_plan(m, plan, session, {})
+    if errors:
+        raise AnswerError(errors[0])
+    mine = apply_changes(plan, changes)
+    own = [Candidate(id="your-plan", title="Your plan", kind="yours", plan=mine, changes=changes,
+                     summary=option_summary(m, plan, values), event=m.event(mine, values))]
+    for n, option in enumerate(session.options, start=2):
+        o_values, o_changes, o_errors = option_plan(m, plan, session, option.answers)
+        if o_errors:
+            continue  # the plan changed underneath this option; the state view shows the error
+        o_plan = apply_changes(plan, o_changes)
+        own.append(Candidate(id=option.id, title=option.label or f"Option {n}", kind="option", plan=o_plan,
+                             changes=o_changes, overrides=option.answers, levers=levers_for(m, values, o_values),
+                             summary=option_summary(m, plan, o_values), event=m.event(o_plan, o_values)))
+    variants = []
+    for v in m.variants(plan, values):
+        try:
+            overrides = {qid: coerce(m.question(qid), value, plan) for qid, value in v.overrides.items()}
+        except AnswerError:
+            continue
+        v_values, v_changes, v_errors = option_plan(m, plan, session, overrides)
+        if v_errors:
+            continue
+        v_plan = apply_changes(plan, v_changes)
+        variants.append(Candidate(id=v.id, title=v.title, kind="variant", plan=v_plan, changes=v_changes,
+                                  overrides=overrides, levers=v.levers, summary=option_summary(m, plan, v_values),
+                                  event=m.event(v_plan, v_values)))
+    return values, mine, own, variants
+
+
+def levers_for(m: DecisionModule, base: Values, values: Values) -> tuple[str, ...]:
+    """Recommendation lever families an option touches relative to the couple's plan."""
+    later = lambda qid: values.get(qid) and base.get(qid) and values[qid] > base[qid]  # noqa: E731
+    less = lambda qid: values.get(qid) is not None and base.get(qid) is not None and values[qid] < base[qid]  # noqa: E731
+    out = []
+    if less("price") or less("rent"):
+        out.append("budget")
+    if later("purchase") or later("move_in") or later("birth"):
+        out.append("delay")
+    if any(values.get(q) != base.get(q) for q in ("split_mode", "custom_share_first", "ownership_share_first")):
+        out.append("split")
+    if m.id == "career-break":
+        if less("months"):
+            out.append("break_shorter")
+        if later("start"):
+            out.append("break_later")
+        if values.get("income_kept", 0) > base.get("income_kept", 0):
+            out.append("break_partial")
+    return tuple(out)
+
+
+def option_summary(m: DecisionModule, plan: Plan, values: Values) -> list[str]:
+    """Short values of the essential inputs, e.g. ["CHF 1,200,000", "Apr 2028", "60%"]."""
+    a, b = plan.people
+    v = values
+    out = []
+    for qid in (qid for group in m.essentials for qid in group):
+        q = m.question(qid)
+        if not _applies(q, v) or qid in ("birth_parent", "extra_leave_months", "extra_leave_income", "custom_share_first"):
+            continue
+        if qid == "split_mode":
+            out.append({"income": "Split by income", "equal": "Split equally"}.get(
+                v[qid], f"{a.name} pays {float(v.get('custom_share_first', 0.5)):.0%}"))
+        elif qid == "extra_leave":
+            who = {"first": a.name, "second": b.name}.get(v[qid])
+            out.append(f"{who} +{int(v['extra_leave_months'])} months at home" if who else "No extra leave")
+        elif qid == "ownership_share_first":
+            out.append(f"Deposit {a.name} {float(v[qid]):.0%} · {b.name} {1 - float(v[qid]):.0%}")
+        elif qid == "study_program":
+            out.append("Time off" if v[qid] == "none" else PROGRAMS[v[qid]]["label"])
+        elif qid == "income_kept":
+            out.append(f"{float(v[qid]):.0%} of pay kept")
+        elif qid == "childcare_days":
+            out.append(f"{float(v[qid]):g} Kita day{'s' if float(v[qid]) != 1 else ''}")
+        elif qid == "months":
+            out.append(f"{int(v[qid])} months")
+        else:
+            out.append(fmt(q, v[qid], plan))
+    return out
+
+
+def memory_hints(m: DecisionModule, plan: Plan, viewer: str, items: list[dict]) -> list[dict]:
+    """The viewer's own discovery notes that relate to this decision.
+
+    Only confirmed notes come with a suggested answer, and a suggestion is never
+    applied by itself: the viewer chooses to use it.
+    """
+    out = []
+    for item in items:
+        slug, _, field = str(item.get("key", "")).partition(".")
+        if slug not in m.memory_slugs or item.get("status") == "rejected" or item.get("kind") == "unknown":
+            continue
+        value = item.get("value")
+        suggestion = None
+        if item.get("status") == "confirmed":
+            if m.id == "buy-home" and field == "flexibility" and value in ("delay", "lower", "both", "neither"):
+                suggestion = {"delay": ("date_flex", "year"), "lower": ("budget_flex", "lower"),
+                              "both": ("budget_flex", "either"), "neither": ("date_flex", "fixed")}[value]
+            elif field == "amount" and m.id == "buy-home" and isinstance(value, (int, float)):
+                suggestion = ("price", float(value))
+            elif field == "date" and isinstance(value, str) and MONTH_RE.match(value):
+                qid = {"buy-home": "purchase", "have-child": "birth", "career-break": "start"}.get(m.id)
+                suggestion = (qid, value) if qid else None
+        hint = dict(id=item.get("id"), key=item["key"], field=field or "goal", value=value,
+                    status=item.get("status"), quote=item.get("quote"), suggestion=None)
+        if suggestion and suggestion[0]:
+            q = m.question(suggestion[0])
+            try:
+                coerced = coerce(q, suggestion[1], plan)
+            except AnswerError:
+                coerced = None
+            if coerced is not None:
+                hint["suggestion"] = dict(question_id=q.id, value=coerced, value_text=fmt(q, coerced, plan),
+                                          label=_render(q.label, plan), personal=q.per_partner)
+        out.append(hint)
+    return out[:8]
+
+
 def _answers_for(q: Question, values: Values, viewer: str) -> bool:
     if q.role == "taker":
         return viewer == values["person"]
@@ -914,8 +1262,13 @@ def absorb(m: DecisionModule, plan: Plan, session: DecisionSession, viewer: str,
             changed = [b for b in updated if b != original.get(b.id)]
             if len(changed) == 1:
                 b = changed[0]
-                record(dict(person=pid, start=b.start, months=b.months, income_kept=b.income_pct / 100,
-                            break_cost=b.one_off_cost_chf))
+                answers = dict(person=pid, start=b.start, income_kept=b.income_pct / 100, break_cost=b.one_off_cost_chf,
+                               study_program=b.study_program or "none")
+                if b.study_program:
+                    answers.update(semester_fee=b.semester_fee_chf, post_study_delta=b.post_study_pay_delta_chf)
+                else:
+                    answers["months"] = b.months
+                record(answers)
                 entry = _career_entry(plan, pid)
                 if entry is None and len(updated) == len(original) + 1:
                     continue
@@ -1069,10 +1422,8 @@ def _brief(m: DecisionModule, plan: Plan, session: DecisionSession, values: Valu
             differences.append(f"{q.topic}: you see this differently. {a.name}: {fmt(q, answers.get(a.id), plan)}. "
                                f"{b.name}: {fmt(q, answers.get(b.id), plan)}.")
 
+    # Plan questions all have defaults (shown as "Suggested"), so only missing personal views are open items.
     missing = []
-    for q in pending(m, plan, session, viewer, values):
-        if not q.per_partner:
-            missing.append(f"{_render(q.label, plan)} is not confirmed yet.")
     for p in partners:
         open_ = [x["topic"].lower() for x in p["preferences"] if x["value"] is None]
         if open_:
@@ -1118,9 +1469,12 @@ def state(m: DecisionModule, plan: Plan, session: DecisionSession, viewer: str, 
             ev = None
     ctx = dict(values=values, eval=ev)
     open_qs = pending(m, plan, session, viewer, values)
-    plan_open = [q for q in m.questions if not q.per_partner and q.stage != "details" and _applies(q, values)
-                 and q.id not in session.answers and not _known(m, q, plan, values)]
     asked = [q for q in m.questions if q.stage != "details" and _applies(q, values) and _answers_for(q, values, viewer)]
+    options = []
+    for o in session.options:
+        o_values, _, o_errors = option_plan(m, plan, session, o.answers)
+        options.append(dict(id=o.id, label=o.label, answers=o.answers, summary=option_summary(m, plan, o_values),
+                            headline=m.headline(plan, o_values), error=o_errors[0] if o_errors else None))
     stage = next((q.stage for q in open_qs), "review")
     described = []
     for ch in changes:
@@ -1136,7 +1490,13 @@ def state(m: DecisionModule, plan: Plan, session: DecisionSession, viewer: str, 
         questions=[_question_view(m, q, plan, session, values, sources, ctx) for q in m.questions],
         next=dict(id=nxt.id, prompt=_render(nxt.prompt, plan), source="deterministic") if nxt else None,
         pending=[q.id for q in open_qs],
-        ready=not plan_open and not errors,
+        # Every plan question has a default, so a decision can be compared as soon as it compiles.
+        ready=not errors,
+        essentials=[[qid for qid in group] for group in m.essentials],
+        summary=option_summary(m, plan, values),
+        headline=m.headline(plan, values),
+        options=options,
+        max_options=MAX_USER_OPTIONS,
         progress=dict(done=len(asked) - len(open_qs), total=len(asked)),
         brief=_brief(m, plan, session, values, sources, viewer),
         changes=[c.model_dump() for c in changes],

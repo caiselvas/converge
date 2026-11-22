@@ -108,29 +108,34 @@ def main() -> None:
     changes, errors = D.compile_changes(D.CAREER_BREAK, home, session)
     assert not errors and home.assumptions.horizon_months == 120
     your_plan = apply_changes(home, changes)
-    before = your_plan.model_dump()
+    before = home.model_dump()
     prefs = {**session.preferences, "date_flex": {nina_id: "fixed"}}
     started = perf_counter()
-    comparison = compare(your_plan, prefs)
+    values, _, own, variants = D.candidates(D.CAREER_BREAK, home, session)
+    options = dict(preferences=prefs, event_label=D.CAREER_BREAK.event_label,
+                   event_of=lambda plan: D.CAREER_BREAK.event(plan, values))
+    comparison = compare(home, own, variants, **options)
     elapsed = perf_counter() - started
     your_option, *alternatives = comparison["columns"]
     assert not your_option["people"][1]["safe"] and not your_option["safe"]
     safe = [o for o in alternatives if o["safe"]]
-    assert len({o["primary_lever"] for o in safe}) == len(safe) >= 2
-    assert all(c["path"] != "shared.property.purchase" for o in safe for c in o["raw_changes"])
+    fixes = [o for o in safe if o["kind"] == "fix"]
+    assert len({o["primary_lever"] for o in fixes}) == len(fixes) >= 2
+    assert all(c["path"] != "shared.property.purchase" for o in safe for c in o["changes"])
     assert all(o["robustness"]["mortgage"]["value"] > 0 and o["robustness"]["income"]["value"] > 0 for o in safe)
-    assert all(any("keeps the home purchase month" in note for note in o["respects"]) for o in safe)
+    assert all(any("keeps the home purchase month" in note for note in o["respects"]) for o in fixes)
     print(f"Planner (120 months): {len(safe)} safe distinct options, firm home date, "
-          f"{comparison['evaluated']} variants in {elapsed:.2f}s")
+          f"{comparison['evaluated']} evaluations in {elapsed:.2f}s")
     for option in safe:
         limits = option["robustness"]
         print(f"  {option['title']} | {limits['mortgage']['value']:.1%} mortgage, "
-              f"{limits['income']['value']:.1%} income drop")
-    stress = compare(your_plan, prefs, {"mortgage_rate": 0.04})
+              f"{limits['income']['value']:.1%} income drop | {', '.join(l['text'] for l in option['labels']) or '-'}")
+    stress = compare(home, own, variants, stress={"mortgage_rate": 0.04}, **options)
+    assert [c["id"] for c in stress["columns"]] == [c["id"] for c in comparison["columns"]], "stress keeps the option set"
     survivors = [o for o in stress["columns"] if o["safe"]]
     assert 0 < len(survivors) < len(safe)
-    assert your_plan.model_dump() == before and home.shared.property.mortgage_rate == 0.018
-    chosen = apply_changes(your_plan, [Change.model_validate(c) for c in survivors[0]["raw_changes"]])
+    assert home.model_dump() == before and home.shared.property.mortgage_rate == 0.018
+    chosen = apply_changes(home, [Change.model_validate(c) for c in survivors[0]["changes"]])
     assert chosen.shared.property.mortgage_rate == home.shared.property.mortgage_rate
     assert evaluate(chosen)["status"] != "conflict"
     print(f"Planner at 4%: {len(survivors)}/{len(safe)} options still safe; "

@@ -53,15 +53,15 @@ function Row({ item, q, onSave, compact }: { item: BriefItem; q: DecisionQuestio
   return (
     <li className="border-b border-line/70 last:border-b-0">
       <button type="button" disabled={!q} onClick={() => setOpen(!open)} aria-expanded={open}
-        className="group flex w-full items-start justify-between gap-3 py-2 text-left">
+        className="group flex min-h-11 w-full items-start justify-between gap-3 py-2 text-left">
         <span className="min-w-0">
-          <span className={clsx("block text-ink-2", compact ? "text-[12.5px]" : "text-[13.5px]")}>{item.label}</span>
-          <span className={clsx("block text-[11px]", src.cls)}>
+          <span className={clsx("block text-ink-2", compact ? "text-[13px]" : "text-[14px]")}>{item.label}</span>
+          <span className={clsx("block text-[12px]", src.cls)}>
             {item.source === "answer" && item.by ? `${name(item.by)}’s answer` : src.label}
           </span>
         </span>
         <span className="flex shrink-0 items-center gap-1.5">
-          <span className={clsx("tnum text-right font-medium text-ink", compact ? "max-w-[150px] text-[12.5px]" : "max-w-[260px] text-[13.5px]")}>{item.value_text}</span>
+          <span className={clsx("tnum text-right font-medium text-ink", compact ? "max-w-[150px] text-[13px]" : "max-w-[260px] text-[14px]")}>{item.value_text}</span>
           {q && <Pencil size={12} className="text-subtle opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />}
         </span>
       </button>
@@ -78,7 +78,7 @@ function Priorities({ state, onSave, compact }: { state: DecisionState; onSave: 
   return (
     <div className="space-y-3">
       {state.brief.partners.map((p) => (
-        <div key={p.id} className="text-[12.5px]">
+        <div key={p.id} className="text-[13px]">
           <div className="flex items-center justify-between gap-2">
             <span className="flex items-center gap-1.5 font-medium text-ink"><Avatar name={p.name} index={idx(p.id)} size={18} />{p.name}</span>
             {p.id !== viewer && !p.complete && (
@@ -106,23 +106,23 @@ function Priorities({ state, onSave, compact }: { state: DecisionState; onSave: 
         </div>
       ))}
       {!compact && state.brief.differences.length > 0 && (
-        <div className="rounded-xl bg-warn-soft px-3 py-2 text-[12.5px] text-warn">
+        <div className="rounded-xl bg-warn-soft px-3 py-2 text-[13px] text-warn">
           {state.brief.differences.map((d) => <p key={d}>{d}</p>)}
         </div>
       )}
-      <p className="text-[11.5px] text-subtle">Only you can state your own priorities. Converge never infers them from your spending.</p>
+      <p className="text-[12px] text-subtle">Only you can state your own priorities. Converge never infers them from your spending.</p>
     </div>
   );
 }
 
-export function DecisionBrief({ state, onSave, variant = "compact" }: { state: DecisionState; onSave: Save; variant?: "compact" | "full" }) {
+export function DecisionBrief({ state, onSave, variant = "compact", bare = false }: { state: DecisionState; onSave: Save; variant?: "compact" | "full"; bare?: boolean }) {
   const compact = variant === "compact";
   const [showAssumptions, setShowAssumptions] = useState(!compact);
   const byId = Object.fromEntries(state.questions.map((q) => [q.id, q]));
   const b = state.brief;
   return (
-    <div className={clsx("rounded-2xl border border-line bg-white", compact ? "p-4" : "p-5 sm:p-6")}>
-      <div className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-muted">Decision brief</div>
+    <div className={clsx(!bare && "rounded-2xl border border-line bg-white", !bare && (compact ? "p-4" : "p-5 sm:p-6"))}>
+      <div className="text-[12px] font-semibold uppercase tracking-[0.08em] text-muted">Decision brief</div>
       <h3 className={clsx("mt-1 font-semibold tracking-tight text-ink", compact ? "text-[15px]" : "text-[19px]")}>{b.summary}</h3>
       {!compact && <p className="mt-1 text-[13px] text-muted">A living summary of what you&apos;re deciding. Select any line to change it.</p>}
 
@@ -154,13 +154,13 @@ export function DecisionBrief({ state, onSave, variant = "compact" }: { state: D
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
           <div className="rounded-xl bg-page p-3">
             <div className="text-[12px] font-semibold text-ink">Fixed points</div>
-            {b.firm.length ? <ul className="mt-1 space-y-0.5 text-[12.5px] text-ink-2">{b.firm.map((x) => <li key={x}>{x}</li>)}</ul>
-              : <p className="mt-1 text-[12.5px] text-muted">None stated.</p>}
+            {b.firm.length ? <ul className="mt-1 space-y-0.5 text-[13px] text-ink-2">{b.firm.map((x) => <li key={x}>{x}</li>)}</ul>
+              : <p className="mt-1 text-[13px] text-muted">None stated.</p>}
           </div>
           <div className="rounded-xl bg-page p-3">
             <div className="text-[12px] font-semibold text-ink">Open to change</div>
-            {b.flexible.length ? <ul className="mt-1 space-y-0.5 text-[12.5px] text-ink-2">{b.flexible.map((x) => <li key={x}>{x}</li>)}</ul>
-              : <p className="mt-1 text-[12.5px] text-muted">None stated.</p>}
+            {b.flexible.length ? <ul className="mt-1 space-y-0.5 text-[13px] text-ink-2">{b.flexible.map((x) => <li key={x}>{x}</li>)}</ul>
+              : <p className="mt-1 text-[13px] text-muted">None stated.</p>}
           </div>
         </div>
       )}
@@ -168,14 +168,14 @@ export function DecisionBrief({ state, onSave, variant = "compact" }: { state: D
       {(b.missing.length > 0 || state.errors.length > 0) && (
         <div className="mt-4 border-t border-line pt-3">
           <div className="text-[12px] font-semibold text-ink">Still open</div>
-          <ul className="mt-1 space-y-0.5 text-[12.5px] text-warn">
+          <ul className="mt-1 space-y-0.5 text-[13px] text-warn">
             {state.errors.map((e) => <li key={e} className="text-bad-strong">{e}</li>)}
             {b.missing.map((m) => <li key={m}>{m}</li>)}
           </ul>
         </div>
       )}
       {!compact && (
-        <div className="mt-4 border-t border-line pt-3 text-[12.5px] leading-5 text-muted">
+        <div className="mt-4 border-t border-line pt-3 text-[13px] leading-5 text-muted">
           <div className="text-[12px] font-semibold text-ink">Limits of this projection</div>
           <ul className="mt-1 list-disc space-y-0.5 pl-4">{b.limits.map((l) => <li key={l}>{l}</li>)}</ul>
         </div>

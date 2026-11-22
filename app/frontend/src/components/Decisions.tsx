@@ -1,17 +1,17 @@
 "use client";
 
 import * as Popover from "@radix-ui/react-popover";
-import { Baby, Briefcase, Gauge, Home, KeyRound, X } from "lucide-react";
+import { Baby, Briefcase, ChevronRight, Gauge, Home, KeyRound, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
 import { chf, monthLabel, pct } from "@/lib/format";
-import { useStore } from "@/lib/store";
+import { scopedHref, useStore } from "@/lib/store";
 import type { Stress } from "@/lib/types";
 import { decisionHref } from "./decisions/registry";
 import { Range, clsx } from "./ui";
 
-const chip = "inline-flex min-h-10 items-center gap-2 rounded-full border border-line-strong bg-white px-3.5 text-[13.5px] font-medium text-ink shadow-[0_1px_2px_rgb(15_23_42/0.04)] hover:bg-page focus-visible:ring-2 focus-visible:ring-accent/40";
+const chip = "inline-flex min-h-10 items-center gap-2 rounded-xl border border-line-strong bg-white px-3.5 text-[14px] font-medium text-ink hover:bg-page focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
 
 const stressFields = [
   { key: "income_drop", label: "Income drop", short: "income drop", min: 0, max: 50, step: 1 },
@@ -90,40 +90,53 @@ export function StressTag() {
   );
 }
 
-export function Decisions() {
-  const { draftPlan, scopedPerson, scope } = useStore();
-  if (!draftPlan) return null;
-  const property = draftPlan.shared.property;
-  const household = draftPlan.shared.household;
-  const children = draftPlan.shared.children;
-  const firstChild = children.length ? [...children].sort((a, b) => a.birth.localeCompare(b.birth))[0] : null;
-  const people = scopedPerson ? [scopedPerson] : draftPlan.people;
-  const withoutBreak = people.filter((p) => !p.career_breaks.some((b) => !b.id.startsWith("cb-child-")));
-  // Life decisions are planned in Goals. These chips only summarise and navigate; they never change the plan.
-  const living = household.enabled && !property.enabled;
+/**
+ * Life decisions already in the agreed plan, as compact markers that open
+ * their planner. Starting a new decision happens in Goals, not here.
+ */
+export function InPlanDecisions() {
+  const { plan, scopedPerson, scope, ws } = useStore();
+  if (!plan || !ws) return null;
+  const property = plan.shared.property;
+  const household = plan.shared.household;
+  const children = [...plan.shared.children].sort((a, b) => a.birth.localeCompare(b.birth));
+  const people = scopedPerson ? plan.people.filter((p) => p.id === scopedPerson.id) : plan.people;
+  const proposed = new Set(ws.decisions.filter((d) => d.status === "proposed").map((d) => d.id));
+  const items: { id: string; href: string; icon: React.ReactNode; title: string; detail: string }[] = [];
+  if (!scopedPerson && household.enabled && !property.enabled) items.push({ id: "move-in", href: decisionHref("move-in", scope), icon: <KeyRound size={18} />,
+    title: "Living together", detail: `From ${monthLabel(household.move_in)} · rent ${chf(household.rent)}/month` });
+  if (!scopedPerson && property.enabled) items.push({ id: "buy-home", href: decisionHref("buy-home", scope), icon: <Home size={18} />,
+    title: "Home purchase", detail: `${chf(property.price, { compact: true })} · ${monthLabel(property.purchase)}` });
+  if (!scopedPerson && children.length) items.push({ id: "have-child", href: decisionHref("have-child", scope), icon: <Baby size={18} />,
+    title: children.length === 1 ? "A child" : `${children.length} children`, detail: `Expected ${monthLabel(children[0].birth)} · ${children[0].childcare_days_per_week} Kita days a week` });
+  for (const person of people) {
+    const entry = person.career_breaks.find((b) => !b.id.startsWith("cb-child-"));
+    if (entry) items.push({ id: `career-break:${person.id}`, href: decisionHref("career-break", scope, { subject: person.id }), icon: <Briefcase size={18} />,
+      title: `${person.name}: ${entry.study_program ? entry.label : "career break"}`, detail: `${entry.months} months from ${monthLabel(entry.start)}` });
+  }
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      {!scopedPerson && !property.enabled && <Link href={decisionHref("move-in", scope)} className={chip}>
-        <KeyRound size={16} className="text-muted" />
-        {living ? `Living together · from ${monthLabel(household.move_in, true)}` : "+ Move in together"}
-      </Link>}
-      {!scopedPerson && <Link href={decisionHref("buy-home", scope)} className={chip}>
-        <Home size={16} className="text-muted" />
-        {property.enabled ? `Home · ${chf(property.price, { compact: true })} · ${monthLabel(property.purchase, true)}` : "+ Buy a home"}
-      </Link>}
-      {!scopedPerson && <Link href={decisionHref("have-child", scope)} className={chip}>
-        <Baby size={16} className="text-muted" />
-        {firstChild ? `${children.length === 1 ? "Child" : `${children.length} children`} · ${monthLabel(firstChild.birth)}` : "+ Have a child"}
-      </Link>}
-      {people.flatMap((person) => person.career_breaks.filter((entry) => !entry.id.startsWith("cb-child-")).slice(0, 1).map((entry) => (
-        <Link key={person.id} href={decisionHref("career-break", scope, { subject: person.id })} className={chip}>
-          <Briefcase size={16} className="text-muted" />{person.name}: {entry.months}-month break from {monthLabel(entry.start, true)}
-        </Link>
-      )))}
-      {withoutBreak.length > 0 && <Link className={chip} href={decisionHref("career-break", scope, { subject: scopedPerson?.id })}>
-        <Briefcase size={16} className="text-muted" /> + Career break
-      </Link>}
-      <StressButton />
-    </div>
+    <section aria-labelledby="in-plan" className="rounded-2xl border border-line bg-white shadow-card">
+      <div className="flex items-center justify-between gap-3 px-4 pt-4 sm:px-5">
+        <h2 id="in-plan" className="text-[16px] font-semibold tracking-tight">In your plan</h2>
+        <Link href={scopedHref("/goals", scope)} className="min-h-10 content-center text-[14px] font-medium text-accent hover:underline">All goals</Link>
+      </div>
+      {items.length ? <ul className="mt-1 divide-y divide-line px-2 pb-2 sm:px-3">
+        {items.map((item) => (
+          <li key={item.id}>
+            <Link href={item.href} className="flex min-h-14 items-center gap-3 rounded-xl px-2 py-2 hover:bg-page">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-sunken text-brand">{item.icon}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[14.5px] font-medium text-ink">{item.title}</span>
+                <span className="tnum block truncate text-[13px] text-muted">{item.detail}</span>
+              </span>
+              {proposed.has(item.id.split(":")[0]) && <span className="rounded-full bg-warn-soft px-2 py-0.5 text-[12px] font-medium text-warn">Change proposed</span>}
+              <ChevronRight size={17} className="shrink-0 text-subtle" />
+            </Link>
+          </li>
+        ))}
+      </ul> : <p className="px-4 pt-1 pb-4 text-[14px] leading-6 text-muted sm:px-5">
+        No life decisions are agreed yet. You can plan one together in <Link href={scopedHref("/goals", scope)} className="font-medium text-accent hover:underline">Goals</Link>.
+      </p>}
+    </section>
   );
 }

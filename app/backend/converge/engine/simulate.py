@@ -69,6 +69,7 @@ class PersonSeries:
     cash: list[float] = field(default_factory=list)
     investments: list[float] = field(default_factory=list)
     investment_sale: list[float] = field(default_factory=list)
+    pension: list[float] = field(default_factory=list)
     property_value: list[float] = field(default_factory=list)
     mortgage: list[float] = field(default_factory=list)
     loans: list[float] = field(default_factory=list)
@@ -103,6 +104,7 @@ class SimResult:
     affordability: dict | None
     child_costs: dict[str, list[ChildMonth]]
     checks: dict
+    investment_factors: list[float] | None = None
 
 
 def household_share_first(plan: Plan, inc_first: float, inc_second: float) -> float:
@@ -137,11 +139,13 @@ def _child_flows(plan: Plan, months: list[str]) -> tuple[dict[str, list[ChildMon
                 childcare = child.childcare_days_per_week * 4.2 * tariff * inflation
             allowance = CHILD_ALLOWANCE_BASE if age <= 144 else CHILD_ALLOWANCE_OLDER if age <= 192 else 0.0
             series[t] = ChildMonth(child.everyday_cost_monthly * inflation, childcare, allowance)
+        if birth >= len(months):
+            continue
         for parent, available in (
             (child.leave.birth_parent, BIRTH_LEAVE_DAYS), (child.leave.other_parent, OTHER_PARENT_LEAVE_DAYS),
         ):
             i = positions[parent]
-            salary = plan.people[i].income_monthly * (1 + a.income_growth) ** (max(0, birth) / 12)
+            salary = plan.people[i].usual_net_income(months[max(0, birth)], a.start, a.income_growth)
             rate = min(LEAVE_DAILY_CAP, LEAVE_REPLACEMENT * salary / 30)
             t = birth
             while available > 0 and t < len(months):
@@ -158,7 +162,7 @@ def _child_flows(plan: Plan, months: list[str]) -> tuple[dict[str, list[ChildMon
     return costs, leave
 
 
-def simulate(plan: Plan) -> SimResult:
+def simulate(plan: Plan, *, investment_factors: list[float] | None = None) -> SimResult:
     a = plan.assumptions
     H = a.horizon_months
     start = a.start
@@ -192,7 +196,7 @@ def simulate(plan: Plan) -> SimResult:
         breaks = []
         for b in p.career_breaks:
             bi = M.index(b.start, start)
-            breaks.append((bi, bi + b.months, b.income_pct / 100.0, b.one_off_cost_chf, b.label))
+            breaks.append((bi, bi + b.months, b))
         sales: dict[int, float] = {}
         for sale in p.sell_investments:
             t = M.index(sale.month, start)
@@ -212,6 +216,7 @@ def simulate(plan: Plan) -> SimResult:
     series = [PersonSeries(pid=p.id, name=p.name, floor=p.emergency_floor) for p in plan.people]
     cash = [p.opening_cash for p in plan.people]
     inv = [p.investments for p in plan.people]
+    pensions = [p.pension_opening_chf for p in plan.people]
 
     prop_val = 0.0
     mort = 0.0
@@ -224,12 +229,11 @@ def simulate(plan: Plan) -> SimResult:
 
     for t in range(H):
         infl = (1 + a.expense_inflation) ** (t / 12)
-        growth = (1 + a.income_growth) ** (t / 12)
         cohabit = cohabit_idx is not None and t >= cohabit_idx
         owned = purchase_idx is not None and t >= purchase_idx
 
         # --- incomes
-        usual = [p.income_monthly * growth for p in plan.people]
+        usual = [p.usual_net_income(months[t], a.start, a.income_growth) for p in plan.people]
         actual = []
         allowance = [0.0, 0.0]
         everyday = childcare = 0.0
@@ -240,15 +244,22 @@ def simulate(plan: Plan) -> SimResult:
             allowance[0 if recipient == plan.people[0].id else 1] += cost.allowance
         on_break = False
         break_one_off = [0.0, 0.0]
+        break_factors = [1.0, 1.0]
         for i, c in enumerate(comp):
             factor = 1.0
-            for (bs, be, pct, cost, lbl) in c["breaks"]:
+            for bs, be, career_break in c["breaks"]:
                 if bs <= t < be:
-                    factor = min(factor, pct)
-                if t == bs and cost > 0:
+                    factor = min(factor, career_break.income_pct / 100)
+                    if (t - bs) % 6 == 0 and career_break.semester_fee_chf:
+                        fee = career_break.semester_fee_chf
+                        break_one_off[i] += fee
+                        series[i].one_off_items.append((t, f"{career_break.label} semester fees", fee))
+                if t == bs and career_break.one_off_cost_chf:
+                    cost = career_break.one_off_cost_chf
                     break_one_off[i] += cost
-                    series[i].one_off_items.append((t, f"{lbl} costs", cost))
+                    series[i].one_off_items.append((t, f"{career_break.label} costs", cost))
             salary = usual[i] * factor
+            break_factors[i] = factor
             fraction, benefit = leave[i].get(t, (0.0, 0.0))
             earnings = salary * (1 - fraction) + benefit
             actual.append(earnings + c["bonus"] + allowance[i])
@@ -324,7 +335,7 @@ def simulate(plan: Plan) -> SimResult:
             c = comp[i]
             s.cash_open.append(cash[i])
             income = actual[i]
-            tax = a.tax_rate * (income - allowance[i])
+            tax = a.tax_rate * (income - allowance[i]) + p.income_tax_monthly
             spending = c["personal_budget"] * infl + (0.0 if cohabit else c["own_home_budget"] * infl)
             household = shares[i] * (hh_cost + moving)
             transfers[i] = household
@@ -343,7 +354,7 @@ def simulate(plan: Plan) -> SimResult:
             one_off = break_one_off[i] + own[i] * fees_total
             deposit = own[i] * deposit_total
             interest_income = max(cash[i], 0.0) * a.cash_interest / 12
-            inv[i] *= inv_growth
+            inv[i] *= inv_growth if investment_factors is None else investment_factors[t]
             sale = min(inv[i], c["sales"].get(t, 0.0))
             inv[i] -= sale
             net = (
@@ -352,6 +363,7 @@ def simulate(plan: Plan) -> SimResult:
             )
             cash[i] += net
             s.investment_sale.append(sale)
+            pensions[i] += p.pension_credit_monthly * break_factors[i]
             if purchase_now and own[i] > 0:
                 s.one_off_items.append((t, "Home deposit", deposit))
                 if fees_total:
@@ -375,11 +387,12 @@ def simulate(plan: Plan) -> SimResult:
             s.net_flow.append(net)
             s.cash.append(cash[i])
             s.investments.append(inv[i])
+            s.pension.append(pensions[i])
             loans_total = sum(max(0.0, l[0]) for l in c["loans"])
             s.loans.append(loans_total)
             s.household_share.append(shares[i])
             # Mortgage after this month's amortisation.
-            s.outgoings.append(spending + shares[i] * hh_cost + housing + amortization + loan_payment)
+            s.outgoings.append(tax + spending + shares[i] * hh_cost + housing + amortization + loan_payment)
 
         mort -= amort
         joint_bal += sum(transfers) - (hh_cost + moving)
@@ -392,7 +405,7 @@ def simulate(plan: Plan) -> SimResult:
             s = series[i]
             s.property_value.append(own[i] * pv_series[-1])
             s.mortgage.append(own[i] * mort_series[-1])
-            s.net_worth.append(s.cash[-1] + s.investments[-1] + s.property_value[-1] - s.mortgage[-1] - s.loans[-1])
+            s.net_worth.append(s.cash[-1] + s.investments[-1] + s.pension[-1] + s.property_value[-1] - s.mortgage[-1] - s.loans[-1])
 
     res = SimResult(
         plan=plan,
@@ -408,6 +421,7 @@ def simulate(plan: Plan) -> SimResult:
         affordability=affordability,
         child_costs=child_costs,
         checks={},
+        investment_factors=investment_factors,
     )
     res.checks = verify(res)
     return res
@@ -431,10 +445,11 @@ def verify(res: SimResult) -> dict:
             )
             flow_err = max(flow_err, abs((inflow - outflow) - s.net_flow[t]))
             cash_err = max(cash_err, abs(prev + s.net_flow[t] - s.cash[t]))
-            nw = s.cash[t] + s.investments[t] + s.property_value[t] - s.mortgage[t] - s.loans[t]
+            nw = s.cash[t] + s.investments[t] + s.pension[t] + s.property_value[t] - s.mortgage[t] - s.loans[t]
             nw_err = max(nw_err, abs(nw - s.net_worth[t]))
             prev = s.cash[t]
-            inv_err = max(inv_err, abs(balance * growth - s.investment_sale[t] - s.investments[t]))
+            factor = growth if res.investment_factors is None else res.investment_factors[t]
+            inv_err = max(inv_err, abs(balance * factor - s.investment_sale[t] - s.investments[t]))
             balance = s.investments[t]
     transfer_err = max((abs(x) for x in res.joint_balance), default=0.0)
     transfer_err = max(transfer_err, max((abs(i - o) for i, o in zip(res.joint_in, res.joint_out)), default=0.0))

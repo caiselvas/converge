@@ -1,6 +1,6 @@
 import type {
-  AssumptionRow, Change, DecisionComparison, DecisionState, DecisionStepIn, ExplainResponse, InterpretResponse, LlmProvider, Proposal, RecResponse,
-  SimResponse, Stress, Workspace,
+  AssumptionRow, Change, DecisionComparison, DecisionState, DecisionStepIn, DecisionUserOption, ExplainResponse,
+  InterpretResponse, LlmProvider, MemoryHint, Proposal, RecResponse, RiskSummary, SimResponse, Stress, Workspace,
 } from "./types";
 
 export const llmProviderLabel = { anthropic: "Claude", openai: "OpenAI" } satisfies Record<LlmProvider, string>;
@@ -11,7 +11,7 @@ export class ApiError extends Error {
   }
 }
 
-async function call<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
+export async function call<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const { json, ...rest } = init ?? {};
   const res = await fetch(`/api${path}`, {
     ...rest,
@@ -33,6 +33,8 @@ async function call<T>(path: string, init?: RequestInit & { json?: unknown }): P
   return res.json() as Promise<T>;
 }
 
+const d = (id: string) => `/decisions/${encodeURIComponent(id)}`;
+
 export const api = {
   health: () => call<{ ok: boolean; llm_available: boolean; llm_model: string | null }>("/health"),
   workspace: () => call<Workspace>("/workspace"),
@@ -53,12 +55,20 @@ export const api = {
     call<InterpretResponse>("/assistant/interpret", { json: { text, viewer, changes } }),
   explain: (changes: Change[], stress?: Stress) => call<ExplainResponse>("/assistant/explain", { json: { changes, stress } }),
   decision: (id: string, viewer: string, signal?: AbortSignal) =>
-    call<DecisionState>(`/decisions/${encodeURIComponent(id)}?viewer=${encodeURIComponent(viewer)}`, { signal }),
-  decisionStep: (id: string, body: DecisionStepIn) => call<DecisionState>(`/decisions/${encodeURIComponent(id)}/step`, { json: body }),
+    call<DecisionState>(`${d(id)}?viewer=${encodeURIComponent(viewer)}`, { signal }),
+  decisionStep: (id: string, body: DecisionStepIn) => call<DecisionState>(`${d(id)}/step`, { json: body }),
   decisionCompare: (id: string, stress: Stress, signal?: AbortSignal) =>
-    call<DecisionComparison>(`/decisions/${encodeURIComponent(id)}/compare`, { json: { stress }, signal }),
+    call<DecisionComparison>(`${d(id)}/compare`, { json: { stress }, signal }),
+  decisionOptions: (id: string, viewer: string, options: DecisionUserOption[]) =>
+    call<DecisionState>(`${d(id)}/options`, {
+      method: "PUT", json: { viewer, options: options.map(({ id, label, answers }) => ({ id, label, answers })) },
+    }),
+  decisionUncertainty: (id: string, option_id: string, stress: Stress) =>
+    call<RiskSummary>(`${d(id)}/uncertainty`, { json: { option_id, stress } }),
+  decisionMemory: (id: string, viewer: string, signal?: AbortSignal) =>
+    call<{ hints: MemoryHint[] }>(`${d(id)}/memory?viewer=${encodeURIComponent(viewer)}`, { signal }),
   decisionPropose: (id: string, author: string, opts: { title?: string; remove?: boolean; option_id?: string; stress?: Stress } = {}) =>
-    call<Proposal>(`/decisions/${encodeURIComponent(id)}/propose`, { json: { author, ...opts } }),
+    call<Proposal>(`${d(id)}/propose`, { json: { author, ...opts } }),
   decisionRestart: (id: string, viewer: string) =>
-    call<DecisionState>(`/decisions/${encodeURIComponent(id)}?viewer=${encodeURIComponent(viewer)}`, { method: "DELETE" }),
+    call<DecisionState>(`${d(id)}?viewer=${encodeURIComponent(viewer)}`, { method: "DELETE" }),
 };

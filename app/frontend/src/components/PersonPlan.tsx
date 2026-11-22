@@ -75,6 +75,23 @@ export function PersonExpenses({ person, base }: { person: Person; base: Person 
           <NumberField ariaLabel="Net income" value={person.income_monthly} step={100} width={170} onChange={(v) => setChange(`people.${person.id}.income_monthly`, v)} />
         </EditRow>
       </PlanSection>
+      <PlanSection title="Tax and pension">
+        <EditRow label="Income tax paid outside payroll" sub="Monthly budget for tax bills your employer doesn’t withhold" value={chf(person.income_tax_monthly ?? 0)}
+          changed={(person.income_tax_monthly ?? 0) !== (base.income_tax_monthly ?? 0)}>
+          <NumberField ariaLabel="Monthly income tax budget" value={person.income_tax_monthly ?? 0} max={100_000} step={50} width={170}
+            onChange={(v) => setChange(`people.${person.id}.income_tax_monthly`, v)} />
+        </EditRow>
+        <EditRow label="Vested pension at plan start" sub="From your pension statement. Counts toward net worth, not available cash." value={chf(person.pension_opening_chf ?? 0)}
+          changed={(person.pension_opening_chf ?? 0) !== (base.pension_opening_chf ?? 0)}>
+          <NumberField ariaLabel="Vested pension at plan start" value={person.pension_opening_chf ?? 0} max={1e9} step={1000} width={170}
+            onChange={(v) => setChange(`people.${person.id}.pension_opening_chf`, v)} />
+        </EditRow>
+        <EditRow label="Monthly pension credit" sub="Employee and employer savings credit together. Scales with pay kept during a break." value={chf(person.pension_credit_monthly ?? 0)}
+          changed={(person.pension_credit_monthly ?? 0) !== (base.pension_credit_monthly ?? 0)}>
+          <NumberField ariaLabel="Monthly occupational pension credit" value={person.pension_credit_monthly ?? 0} max={100_000} step={50} width={170}
+            onChange={(v) => setChange(`people.${person.id}.pension_credit_monthly`, v)} />
+        </EditRow>
+      </PlanSection>
       {groups.map(({ label, keys }) => {
         const categories = person.categories.filter((c) => keys.includes(c.group));
         return categories.length > 0 && <PlanSection key={label} title={label}>

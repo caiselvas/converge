@@ -72,6 +72,10 @@ interface Ctx {
   setInboxOpen: (o: boolean) => void;
   sourcesOpen: boolean;
   setSourcesOpen: (o: boolean) => void;
+  /** The assistant panel; `decision` scopes it to the decision on screen. */
+  assistant: { open: boolean; decision: string | null; prompt?: string };
+  openAssistant: (opts?: { decision?: string | null; prompt?: string }) => void;
+  closeAssistant: () => void;
   name: (id: string | null | undefined) => string;
   idx: (id: string | null | undefined) => number;
 }
@@ -126,6 +130,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [assistant, setAssistant] = useState<Ctx["assistant"]>({ open: false, decision: null });
+  const openAssistant = useCallback((opts: { decision?: string | null; prompt?: string } = {}) =>
+    setAssistant({ open: true, decision: opts.decision ?? null, prompt: opts.prompt }), []);
+  const closeAssistant = useCallback(() => setAssistant((a) => ({ ...a, open: false, prompt: undefined })), []);
   const toastId = useRef(0);
 
   const toast = useCallback((text: string, kind: Toast["kind"] = "success") => {
@@ -291,7 +299,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     ws, loadError, viewer, setViewer, scope, setScope, scopedPerson, stress, setStress, plan, draftPlan, draft,
     setChange, addChanges, removeChange, discardDraft, sim, simLoading, simError: simErrFor === simKey ? simError : null,
     propose, decide, restore, reset,
-    refresh, toasts, toast, inboxOpen, setInboxOpen, sourcesOpen, setSourcesOpen, name, idx,
+    refresh, toasts, toast, inboxOpen, setInboxOpen, sourcesOpen, setSourcesOpen, assistant, openAssistant, closeAssistant, name, idx,
   };
   return <C.Provider value={value}>{children}</C.Provider>;
 }

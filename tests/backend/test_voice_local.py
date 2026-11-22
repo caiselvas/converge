@@ -1,0 +1,91 @@
+import json
+from struct import pack
+from unittest.mock import Mock, call
+
+from fastapi.testclient import TestClient
+
+from converge import api, config
+from converge.engine.changes import apply_changes
+from converge.engine.evaluate import chf, evaluate
+from converge.models import Change
+from converge.store import Store
+from converge.voice import local, realtime
+
+
+def test_local_mode_without_optional_packages(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "VOICE_PROVIDER", "local")
+    monkeypatch.setattr(local, "find_spec", lambda _: None)
+    assert realtime.provider_status() == {
+        "provider": "local", "enabled": False,
+        "reason": "Install the optional faster-whisper and Piper packages to use local voice.",
+    }
+
+
+def test_local_socket_stt_tool_llm_tts_and_text_memory(simple_plan, tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(config, "VOICE_PROVIDER", "local")
+    monkeypatch.setattr(local, "missing_dependencies", lambda: None)
+    monkeypatch.setattr(api, "store", Store(path=str(tmp_path / "workspace.json"), seed_factory=lambda: simple_plan))
+    monkeypatch.setattr(realtime, "limit", realtime.SessionLimit())
+    monkeypatch.setattr(realtime, "mint_client_secret", Mock(side_effect=AssertionError("Local mode contacted hosted voice.")))
+    expected = evaluate(simple_plan)["people"][0]["min_cash"]
+    answer = f"In this simulation, your lowest cash is CHF {expected:,.0f}."
+    keyframes = [b"first-wave", b"second-wave"]
+
+    def llm(messages):
+        if messages[-1]["role"] != "tool":
+            return {"tool_calls": [{"id": "check", "function": {"name": "get_summary", "arguments": "{}"}}]}
+        facts = json.loads(messages[-1]["content"])
+        assert facts["people"][0]["min_cash"] == expected
+        return {"content": answer}
+
+    pcm = pack("<320h", *([1200] * 320))
+    goal = "I want a sabbatical in May 2028."
+    what_if = "Simulate moving in together, compare the lowest cache balance before and after the change."
+    stt = Mock(side_effect=[goal, what_if])
+    pipeline = local.Pipeline(stt, llm, lambda text: iter(keyframes) if text == answer else iter(()))
+    monkeypatch.setattr(local, "load_pipeline", lambda: pipeline)
+    with TestClient(api.app) as client:
+        session = client.post("/api/voice/session", json={"person": "A"}).json()
+        assert "token" not in session
+        with client.websocket_connect(session["socket_path"]) as socket:
+            greeting = socket.receive_json()["text"]
+            assert greeting == local.LOCAL_INTRO
+            assert socket.receive_json()["state"] == "speaking"
+            assert socket.receive_json()["state"] == "listening"
+            socket.send_json({"type": "start"})
+            socket.send_bytes(bytes(len(pcm)))
+            socket.send_json({"type": "end"})
+            assert socket.receive_json()["state"] == "listening"
+            stt.assert_not_called()
+
+            socket.send_json({"type": "start"})
+            socket.send_bytes(pcm)
+            socket.send_json({"type": "end"})
+            assert socket.receive_json()["state"] == "thinking"
+            assert socket.receive_json()["speaker"] == "user"
+            result = socket.receive_json()
+            assert result["speaker"] == "assistant" and result["grounded"] is True
+            assert any(item["key"] == "sabbatical.stated_goal" for item in result["memory"])
+            assert socket.receive_json()["state"] == "speaking"
+            assert [socket.receive_bytes(), socket.receive_bytes()] == keyframes
+            assert socket.receive_json()["state"] == "listening"
+
+            socket.send_json({"type": "start"})
+            socket.send_bytes(pcm)
+            socket.send_json({"type": "end"})
+            assert socket.receive_json()["state"] == "thinking"
+            assert socket.receive_json()["text"] == what_if
+            comparison = socket.receive_json()
+            assert comparison["grounded"]
+            moved = apply_changes(simple_plan, [Change(path="shared.household.enabled", value=True)])
+            before = min(p["min_cash"] for p in evaluate(simple_plan)["people"])
+            after = min(p["min_cash"] for p in evaluate(moved)["people"])
+            assert f"{chf(before)} for " in comparison["text"]
+            assert f"{chf(after)} for " in comparison["text"]
+            assert socket.receive_json()["state"] == "speaking"
+            assert socket.receive_json()["state"] == "listening"
+        memory = client.get("/api/twin/memory", params={"person": "A"}).json()["memory"]
+        assert any(item["quote"] == goal for item in memory)
+    assert stt.call_args_list == [call(pcm), call(pcm)]
+    assert set(local.memory_db().path.parent.glob("*.wav")) == set()

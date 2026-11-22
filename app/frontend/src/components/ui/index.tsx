@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { ChevronDown, Info, Lock, Minus, Plus } from "lucide-react";
+import { ChevronDown, Info, Loader2, Lock, Minus, Plus } from "lucide-react";
 import * as RTooltip from "@radix-ui/react-tooltip";
 import { forwardRef, useId, useState } from "react";
 
@@ -13,7 +13,7 @@ export { clsx };
 
 export function Card({ className, children, ...rest }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={clsx("rounded-2xl border border-line bg-surface shadow-[0_1px_2px_rgb(15_23_42/0.04)]", className)} {...rest}>
+    <div className={clsx("rounded-2xl border border-line bg-surface shadow-card", className)} {...rest}>
       {children}
     </div>
   );
@@ -45,38 +45,54 @@ export function SectionTitle({ children, hint }: { children: React.ReactNode; hi
 
 // ---------------------------------------------------------------- buttons
 
-type BtnVariant = "primary" | "secondary" | "ghost" | "danger" | "subtle";
+type BtnVariant = "primary" | "secondary" | "ghost" | "danger" | "subtle" | "accent";
+type BtnSize = "sm" | "md" | "lg" | "icon" | "icon-sm";
 
-export const Button = forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: BtnVariant; size?: "sm" | "md" }>(
-  function Button({ variant = "secondary", size = "md", className, children, ...rest }, ref) {
+/**
+ * Touch targets: 44px on phones for md/icon, 40px for sm; one step smaller from `sm:` up,
+ * where a pointer is precise.
+ */
+const BTN_SIZE: Record<BtnSize, string> = {
+  sm: "h-10 px-3.5 text-[13.5px] sm:h-9 sm:px-3",
+  md: "h-11 px-4 text-[14.5px] sm:h-10",
+  lg: "h-12 px-5 text-[15px]",
+  icon: "h-11 w-11 sm:h-10 sm:w-10",
+  "icon-sm": "h-10 w-10 sm:h-9 sm:w-9",
+};
+
+export const Button = forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: BtnVariant; size?: BtnSize; loading?: boolean }>(
+  function Button({ variant = "secondary", size = "md", loading = false, className, children, disabled, ...rest }, ref) {
     return (
       <button
         ref={ref}
+        disabled={disabled || loading}
+        aria-busy={loading || undefined}
         className={clsx(
-          "inline-flex items-center justify-center gap-1.5 rounded-lg font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-50",
-          size === "sm" ? "h-8 px-3 text-[13px]" : "h-9 px-3.5 text-sm",
-          variant === "primary" && "bg-ink text-white hover:bg-ink-2",
+          "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl font-medium whitespace-nowrap transition-[background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-45",
+          BTN_SIZE[size],
+          variant === "primary" && "bg-ink text-white shadow-[0_1px_2px_rgb(16_24_40/0.12)] hover:bg-ink-2",
+          variant === "accent" && "bg-accent text-white shadow-[0_1px_2px_rgb(16_24_40/0.12)] hover:bg-[#095f69]",
           variant === "secondary" && "border border-line-strong bg-white text-ink hover:bg-page",
-          variant === "ghost" && "text-ink-2 hover:bg-page",
-          variant === "subtle" && "bg-page text-ink hover:bg-line",
+          variant === "ghost" && "text-ink-2 hover:bg-sunken",
+          variant === "subtle" && "bg-sunken text-ink hover:bg-line",
           variant === "danger" && "border border-line-strong bg-white text-bad-strong hover:bg-bad-soft",
           className,
         )}
         {...rest}
       >
+        {loading && <Loader2 size={15} className="animate-spin" aria-hidden />}
         {children}
       </button>
     );
   },
 );
-
 // ---------------------------------------------------------------- badges
 
 export function Badge({ tone = "neutral", children, className }: { tone?: "neutral" | "good" | "warn" | "bad" | "info" | "p0" | "p1"; children: React.ReactNode; className?: string }) {
   return (
     <span
       className={clsx(
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] font-medium whitespace-nowrap",
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[12px] font-medium whitespace-nowrap",
         tone === "neutral" && "bg-page text-ink-2 ring-1 ring-line",
         tone === "good" && "bg-good-soft text-good",
         tone === "warn" && "bg-warn-soft text-warn",
@@ -172,9 +188,9 @@ export function Disclosure({ label, children, defaultOpen = false, className }: 
   const id = useId();
   return (
     <div className={className}>
-      <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)} className="inline-flex items-center gap-1 text-[13px] font-medium text-accent hover:underline">
+      <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)} className="inline-flex min-h-10 items-center gap-1 rounded-lg text-[14px] font-medium text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
         {label}
-        <ChevronDown size={14} className={clsx("transition-transform", open && "rotate-180")} />
+        <ChevronDown size={15} className={clsx("transition-transform", open && "rotate-180")} />
       </button>
       {open && (
         <div id={id} className="fade-up mt-2">
@@ -187,9 +203,13 @@ export function Disclosure({ label, children, defaultOpen = false, className }: 
 
 // ---------------------------------------------------------------- inputs
 
-export function Segmented<T extends string>({ value, options, onChange, size = "md", ariaLabel }: { value: T; options: { value: T; label: React.ReactNode }[]; onChange: (v: T) => void; size?: "sm" | "md"; ariaLabel?: string }) {
+export function Segmented<T extends string>({ value, options, onChange, size = "md", ariaLabel, full = false, className }: {
+  value: T; options: { value: T; label: React.ReactNode }[]; onChange: (v: T) => void; size?: "sm" | "md" | "lg";
+  ariaLabel?: string; full?: boolean; className?: string;
+}) {
   return (
-    <div role="radiogroup" aria-label={ariaLabel} className="inline-flex rounded-lg bg-page p-0.5 ring-1 ring-line">
+    <div role="radiogroup" aria-label={ariaLabel}
+      className={clsx("rounded-xl bg-sunken p-1", full ? "grid auto-cols-fr grid-flow-col" : "inline-flex", className)}>
       {options.map((o) => (
         <button
           key={o.value}
@@ -198,9 +218,9 @@ export function Segmented<T extends string>({ value, options, onChange, size = "
           aria-checked={value === o.value}
           onClick={() => onChange(o.value)}
           className={clsx(
-            "rounded-md font-medium transition-all",
-            size === "sm" ? "px-2.5 py-1 text-[12.5px]" : "px-3 py-1.5 text-[13px]",
-            value === o.value ? "bg-white text-ink shadow-sm ring-1 ring-line" : "text-muted hover:text-ink",
+            "inline-flex items-center justify-center gap-1.5 rounded-[9px] font-medium whitespace-nowrap transition-[background-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
+            size === "sm" ? "min-h-8 px-3 text-[13px]" : size === "lg" ? "min-h-10 px-4 text-[14.5px]" : "min-h-9 px-3.5 text-[14px]",
+            value === o.value ? "bg-white text-ink shadow-[0_1px_2px_rgb(16_24_40/0.10)] ring-1 ring-line" : "text-muted hover:text-ink",
           )}
         >
           {o.label}
@@ -244,27 +264,27 @@ export function NumberField({
   };
   const text = editing ?? num(value, decimals);
   return (
-    <div className={clsx("inline-flex h-9 items-center rounded-lg border bg-white transition-colors focus-within:ring-2 focus-within:ring-accent/30", changed ? "border-accent" : "border-line-strong", disabled && "opacity-60")} style={{ width }}>
-      <button type="button" aria-label={`Decrease ${ariaLabel}`} disabled={disabled} onClick={() => onChange(clamp(value - step))} className="flex h-full w-7 shrink-0 items-center justify-center text-muted hover:text-ink">
-        <Minus size={13} />
+    <div className={clsx("inline-flex h-11 max-w-full items-center rounded-xl border bg-white transition-colors focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/25 sm:h-10", changed ? "border-accent" : "border-line-strong", disabled && "opacity-60")} style={{ width }}>
+      <button type="button" aria-label={`Decrease ${ariaLabel}`} disabled={disabled} onClick={() => onChange(clamp(value - step))} className="flex h-full w-10 shrink-0 items-center justify-center rounded-l-xl text-muted hover:bg-page hover:text-ink">
+        <Minus size={15} />
       </button>
       <div className="flex min-w-0 flex-1 items-center justify-center gap-1">
-        {prefix && <span className="text-[11px] text-subtle">{prefix}</span>}
+        {prefix && <span className="text-[12px] text-subtle">{prefix}</span>}
         <input
           aria-label={ariaLabel}
           inputMode="decimal"
           disabled={disabled}
-          className="tnum w-full min-w-0 bg-transparent text-center text-[13.5px] font-medium text-ink outline-none"
+          className="tnum w-full min-w-0 bg-transparent text-center text-[16px] font-semibold text-ink outline-none sm:text-[14.5px]"
           value={text}
           onFocus={() => setEditing(num(value, decimals))}
           onChange={(e) => setEditing(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
         />
-        {suffix && <span className="text-[11px] text-subtle">{suffix}</span>}
+        {suffix && <span className="text-[12px] text-subtle">{suffix}</span>}
       </div>
-      <button type="button" aria-label={`Increase ${ariaLabel}`} disabled={disabled} onClick={() => onChange(clamp(value + step))} className="flex h-full w-7 shrink-0 items-center justify-center text-muted hover:text-ink">
-        <Plus size={13} />
+      <button type="button" aria-label={`Increase ${ariaLabel}`} disabled={disabled} onClick={() => onChange(clamp(value + step))} className="flex h-full w-10 shrink-0 items-center justify-center rounded-r-xl text-muted hover:bg-page hover:text-ink">
+        <Plus size={15} />
       </button>
     </div>
   );
@@ -296,7 +316,7 @@ export function MonthField({ value, onChange, ariaLabel, min, max, changed }: { 
       min={min}
       max={max}
       onChange={(e) => e.target.value && onChange(e.target.value)}
-      className={clsx("tnum h-9 rounded-lg border bg-white px-2.5 text-[13.5px] font-medium text-ink outline-none focus:ring-2 focus:ring-accent/30", changed ? "border-accent" : "border-line-strong")}
+      className={clsx("tnum h-11 max-w-full rounded-xl border bg-white px-3 text-[16px] font-semibold text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/25 sm:h-10 sm:text-[14.5px]", changed ? "border-accent" : "border-line-strong")}
     />
   );
 }
@@ -330,11 +350,11 @@ export function LockedNote({ owner }: { owner: string }) {
 export function Stat({ label, value, sub, tone, tip }: { label: React.ReactNode; value: React.ReactNode; sub?: React.ReactNode; tone?: "good" | "bad" | "warn"; tip?: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <div className="flex items-center gap-1 text-[12px] font-medium text-muted">
+      <div className="flex items-center gap-1 text-[12.5px] font-medium text-muted">
         {label}
         {tip && <InfoTip content={tip} />}
       </div>
-      <div className={clsx("tnum mt-1 text-[20px] font-semibold tracking-tight", tone === "bad" ? "text-bad-strong" : tone === "warn" ? "text-warn" : tone === "good" ? "text-good" : "text-ink")}>{value}</div>
+      <div className={clsx("tnum mt-1 text-[22px] leading-tight font-semibold tracking-tight", tone === "bad" ? "text-bad-strong" : tone === "warn" ? "text-warn" : tone === "good" ? "text-good" : "text-ink")}>{value}</div>
       {sub && <div className="mt-0.5 text-[12px] text-muted">{sub}</div>}
     </div>
   );
