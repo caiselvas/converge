@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+dist/
+build/
+coverage/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local data and databases
+external/
+data/raw/
+*.db
+*.sqlite
+*.sqlite3
+
+# Agents
+.claude/settings.local.json
+CLAUDE.local.md
+.codex/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.log
