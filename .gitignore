@@ -23,11 +23,17 @@ coverage/
 # Local data and databases
 external/
 data/raw/
+frontend/public/data/
 *.db
 *.sqlite
 *.sqlite3
 
-# Agents
+# Agents (skills are local-only; reinstall per machine)
+.agents/skills/
+.claude/skills/
+.claude/agents/
+skills-lock.json
+.impeccable/
 .claude/settings.local.json
 CLAUDE.local.md
 .codex/

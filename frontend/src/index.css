@@ -1,0 +1,77 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource-variable/geist";
+
+@theme inline {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-sans);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--card);
+  --color-popover-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--muted);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--muted);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: var(--negative);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--brand);
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-negative: var(--negative);
+  --color-negative-soft: var(--negative-soft);
+  --color-ink-2: var(--ink-2);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --text-xs: 0.8rem;
+  --text-xs--line-height: 1.15rem;
+  --shadow-panel: 0 1px 2px oklch(0.25 0.02 70 / 0.04), 0 6px 20px -8px oklch(0.25 0.02 70 / 0.08);
+  --shadow-pop: 0 2px 4px oklch(0.25 0.02 70 / 0.05), 0 14px 32px -8px oklch(0.25 0.02 70 / 0.16);
+}
+
+:root {
+  --background: oklch(0.982 0.006 88);
+  --card: oklch(0.996 0.003 88);
+  --foreground: oklch(0.21 0.015 70);
+  --ink-2: oklch(0.38 0.02 70);
+  --muted: oklch(0.953 0.008 88);
+  --muted-foreground: oklch(0.5 0.014 75);
+  --border: oklch(0.915 0.008 85);
+  --primary: oklch(0.23 0.015 70);
+  --primary-foreground: oklch(0.985 0.004 88);
+  --brand: oklch(0.46 0.085 185);
+  --brand-soft: oklch(0.95 0.028 185);
+  --negative: oklch(0.52 0.16 28);
+  --negative-soft: oklch(0.96 0.025 28);
+  --radius: 0.625rem;
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html { @apply font-sans antialiased; font-size: 15px; }
+  body { @apply bg-background text-foreground; font-feature-settings: "cv11", "ss01"; }
+  ::selection { background: var(--brand-soft); color: var(--foreground); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  * { scrollbar-width: thin; scrollbar-color: oklch(0.85 0.01 80) transparent; }
+  input[type="date"] { font-variant-numeric: tabular-nums; }
+  button, [role="button"] { cursor: pointer; }
+}
+
+@utility tnum { font-variant-numeric: tabular-nums; }
+@utility panel { @apply rounded-xl border bg-card shadow-panel; }
+@utility label { @apply text-xs font-medium text-muted-foreground; }
+
+@keyframes pulse { 50% { opacity: 0.55; } }
+.skeleton { background: var(--muted); animation: pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
+input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.5; }
