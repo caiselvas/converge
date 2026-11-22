@@ -10,7 +10,7 @@ export class ApiError extends Error {
   }
 }
 
-async function call<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
+export async function call<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const { json, ...rest } = init ?? {};
   const res = await fetch(`/api${path}`, {
     ...rest,

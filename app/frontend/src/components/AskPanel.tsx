@@ -1,15 +1,19 @@
 "use client";
 
 import { CornerDownLeft, Loader2, Sparkles, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, llmProviderLabel } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import type { InterpretResponse } from "@/lib/types";
 import { ChangeRow } from "./DraftBar";
 import { Button } from "./ui";
+import { VoicePanel } from "./VoicePanel";
 
 export function AskPanel({ open, setOpen }: { open: boolean; setOpen: (open: boolean) => void }) {
   const { viewer, draft, scopedPerson, addChanges, toast } = useStore();
+  const [voicePerson, setVoicePerson] = useState<string | null>(null);
+  const voiceActive = open && voicePerson === viewer;
+  const setVoiceActive = useCallback((active: boolean) => setVoicePerson(active ? viewer : null), [viewer]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<InterpretResponse | null>(null);
@@ -22,7 +26,7 @@ export function AskPanel({ open, setOpen }: { open: boolean; setOpen: (open: boo
         if (open) input.current?.focus();
         else setOpen(true);
       }
-      if (open && e.key === "Escape") setOpen(false);
+      if (open && e.key === "Escape") { setVoicePerson(null); setOpen(false); }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -52,9 +56,10 @@ export function AskPanel({ open, setOpen }: { open: boolean; setOpen: (open: boo
       className="pointer-events-auto mb-2 max-h-[min(52dvh,480px)] overflow-y-auto rounded-2xl border border-line bg-white p-4 shadow-xl md:fixed md:top-[3.75rem] md:right-[max(1.5rem,calc((100%-1072px)/2))] md:w-[420px]">
       <div className="mb-2 flex items-center justify-between">
         <h2 id="ask-title" className="text-[15px] font-semibold">Ask</h2>
-        <Button variant="ghost" size="sm" aria-label="Close Ask" onClick={() => setOpen(false)}><X size={16} /></Button>
+        <Button variant="ghost" size="sm" aria-label="Close Ask" onClick={() => { setVoicePerson(null); setOpen(false); }}><X size={16} /></Button>
       </div>
-      <form onSubmit={(e) => { e.preventDefault(); void run(); }} className="relative">
+      <VoicePanel key={viewer} person={viewer} active={voiceActive} setActive={setVoiceActive} />
+      {!voiceActive && <form onSubmit={(e) => { e.preventDefault(); void run(); }} className="relative">
         <input ref={input} autoFocus value={text} maxLength={1000} onChange={(e) => setText(e.target.value)}
           aria-label="Describe a change in your own words" placeholder="Emil takes 12 months off from Jan 2028"
           className="h-10 w-full rounded-full border border-line-strong bg-white pr-10 pl-4 text-[14px] outline-none placeholder:text-subtle focus:ring-2 focus:ring-accent/30" />
@@ -62,8 +67,8 @@ export function AskPanel({ open, setOpen }: { open: boolean; setOpen: (open: boo
           className="absolute top-1/2 right-1.5 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-ink text-white disabled:opacity-30">
           {busy ? <Loader2 size={13} className="animate-spin" /> : <CornerDownLeft size={13} />}
         </button>
-      </form>
-      {result && <div aria-live="polite" className="mt-3">
+      </form>}
+      {!voiceActive && result && <div aria-live="polite" className="mt-3">
         <p className="text-[12px] text-muted">{result.mode === "llm" && result.provider ? `Understood by ${llmProviderLabel[result.provider]} · checked by the engine` : "Understood by the built-in parser"}</p>
         {result.notice && <p className="mt-1 text-[12px] text-warn">{result.notice}</p>}
         <div className="mt-2 divide-y divide-line">{result.described.map((c) => <ChangeRow key={c.path} c={c} />)}</div>

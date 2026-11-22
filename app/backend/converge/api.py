@@ -17,6 +17,7 @@ from converge.engine.evaluate import evaluate
 from converge.engine.recommend import recommend
 from converge.models import KITA_INFANT_TARIFF, Change, Child, ParentalLeave, Plan
 from converge.store import Store, WorkflowError, normalise
+from converge.voice.realtime import router_for as voice_router
 from converge.voice.routes import router_for as twin_router
 
 logging.basicConfig(level=logging.INFO)
@@ -32,6 +33,7 @@ app.add_middleware(
 
 store = Store()
 app.include_router(twin_router(lambda: store.plan))
+app.include_router(voice_router(lambda: store.plan))
 
 
 class StressIn(BaseModel):

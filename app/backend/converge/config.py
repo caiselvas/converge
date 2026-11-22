@@ -38,3 +38,11 @@ def llm_provider() -> Provider | None:
     if LLM_PROVIDER == "openai" or (LLM_PROVIDER == "auto" and OPENAI_API_KEY):
         return "openai"
     return None
+
+
+VOICE_PROVIDER = os.environ.get("CONVERGE_VOICE_PROVIDER", "off").strip().lower() or "off"
+if VOICE_PROVIDER not in {"off", "openai_realtime", "local"}:
+    raise ValueError("CONVERGE_VOICE_PROVIDER must be off, openai_realtime or local")
+
+VOICE_MAX_SECONDS = min(900, max(30, int(os.environ.get("CONVERGE_VOICE_MAX_SECONDS", "300"))))
+VOICE_IDLE_SECONDS = 30
