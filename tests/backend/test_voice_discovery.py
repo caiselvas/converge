@@ -5,9 +5,9 @@ from pydantic import ValidationError
 
 from converge import ai, config
 from converge.engine.changes import apply_changes
-from converge.engine.evaluate import evaluate
+from converge.engine.evaluate import chf, evaluate
 from converge.models import Change, Goal
-from converge.voice.extract import Candidates, extract
+from converge.voice.extract import Candidates, extract, offline
 from converge.voice.memory import Item, Memory
 from converge.voice.routes import ingest_turn
 from converge.voice.tools import Session, execute_tool, ground_turn
@@ -69,28 +69,108 @@ def test_extraction_drops_bad_schema_and_evidence(session, monkeypatch):
     assert any(i.key == "sabbatical" for i in asyncio.run(extract("I want a sabbatical.")))
 
 
-def test_question_order_cooldown_and_sensitive_skip(session):
+def test_question_order_stays_current_and_skips_sensitive_topics(session):
     ask = lambda: execute_tool("next_question", {}, session)
+    assert ask()["key"] == "life_priorities"
+    turn(session, "I'm not sure.")
+    assert ask()["key"] == "life_priorities"
+    turn(session, "Prefer not to say")
     assert ask()["key"] == "discovery"
     turn(session, "I want to buy a home in 2029")
+    assert ask()["key"] == "home.why"
+    turn(session, "I'd like a stable place for our family.")
     assert ask()["key"] == "home.amount"
-    assert ask()["key"] == "home.amount"
-    turn(session, "I am not sure.")
-    assert ask()["key"] != "home.amount"
-    turn(session, "I still want to buy a home.")
-    assert ask()["key"] == "home.amount"
+    for reply in ("I am not sure.", "Still thinking.", "I don't know."):
+        turn(session, reply)
+        assert ask()["key"] == "home.amount"
     turn(session, "CHF 900k")
     assert ask()["key"] == "home.date"
-    turn(session, "June 2029")
+    turn(session, "Spring 2029")
+    assert ask()["key"] == "home.date"
+    turn(session, "By June 2029")
+    result = ask()
+    assert result["key"] == "home.flexibility" and result["reaction"]
+    assert ask() == result
+    turn(session, "I'd postpone rather than reduce it.")
+    assert ask()["key"] == "home.partner_agreement"
+    turn(session, "We would need to agree on the neighbourhood.")
     assert ask()["key"] == "home.priority"
-    turn(session, "High")
-    assert ask()["key"] == "home.flexibility"
-    turn(session, "Delay")
+    turn(session, "High priority.")
     assert ask()["key"] == "home.permission"
     turn(session, "Prefer not to say")
     assert ask()["key"] == "discovery"
     turn(session, "Anything else?")
-    assert ask()["key"] != "home.risk"
+    assert ask()["key"] == "discovery"
+    memory = {i["key"]: i for i in session.memory.items("B") if i["kind"] == "fact"}
+    assert memory["home.why"]["quote"] == "I'd like a stable place for our family."
+    assert memory["home.partner_agreement"]["quote"] == "We would need to agree on the neighbourhood."
+
+
+@pytest.mark.parametrize("reply", ["around 80000 francs", "about 80000", "around 80000 (francs)", "80k", "CHF 80'000"])
+def test_offline_amount_phrasings(reply):
+    [item] = offline(reply, {"key": "sabbatical.amount"})
+    assert (item.key, item.value, item.quote, item.dimension) == ("sabbatical.amount", 80000, reply, "goals")
+
+
+@pytest.mark.parametrize(("reply", "expected"), [
+    ("by March 2029", "2029-03"), ("in March 2029", "2029-03"), ("spring 2029", "2029"),
+])
+def test_offline_deadline_phrasings(reply, expected):
+    [item] = offline(reply, {"key": "sabbatical.date"})
+    assert (item.key, item.value) == ("sabbatical.date", expected)
+
+
+@pytest.mark.parametrize(("reply", "expected"), [
+    ("I'd delay it.", "delay"), ("I would postpone it.", "delay"), ("I'd lower the target.", "lower"),
+    ("I'd reduce it.", "lower"), ("I'd consider both.", "both"), ("I would postpone rather than reduce.", "delay"),
+])
+def test_offline_flexibility_phrasings(reply, expected):
+    [item] = offline(reply, {"key": "sabbatical.flexibility"})
+    assert (item.key, item.value) == ("sabbatical.flexibility", expected)
+
+
+def test_two_goals_ask_which_comes_first_and_store_priority(session):
+    ask = lambda: execute_tool("next_question", {}, session)
+    assert ask()["key"] == "life_priorities"
+    turn(session, "Time with my family.")
+    assert ask()["key"] == "discovery"
+    turn(session, "I want to buy a home.")
+    assert ask()["key"] == "home.why"
+    turn(session, "I also want to take a sabbatical.")
+    assert ask()["key"] == "home.why"
+    turn(session, "I want a place to settle down.")
+    assert ask()["key"] == "sabbatical.why"
+    turn(session, "I want time to recover.")
+    question = ask()
+    assert question["key"] == "goal_tradeoff"
+    assert "Home" in question["question"] and "Sabbatical" in question["question"]
+    turn(session, "Sabbatical comes first.")
+    assert ask()["key"] != "goal_tradeoff"
+    facts = {i["key"]: i["value"] for i in session.memory.items("B") if i["kind"] == "fact"}
+    assert facts["sabbatical.priority"] == "high" and facts["home.priority"] == "low"
+
+
+def test_complete_goal_simulates_once_and_reacts_with_engine_result(session, monkeypatch):
+    from unittest.mock import Mock
+    from converge.voice import tools
+
+    spy = Mock(wraps=tools.execute_tool)
+    monkeypatch.setattr(tools, "execute_tool", spy)
+    assert execute_tool("next_question", {}, session)["key"] == "life_priorities"
+    turn(session, "I want more time for family.")
+    assert execute_tool("next_question", {}, session)["key"] == "discovery"
+    turn(session, "I want a sabbatical with around 800000 in May 2028")
+    question = execute_tool("next_question", {}, session)
+    assert question["key"] == "sabbatical.flexibility"
+    assert spy.call_count == 1 and spy.call_args.args[0] == "simulate_changes"
+    args = spy.call_args.args[1]
+    expected = evaluate(apply_changes(session.plan, [Change(**change) for change in args["changes"]]))
+    [goal] = expected["people"][1]["goals"]
+    assert question["reaction"] == next(result["after"]["speakable"] for result in session.memory.recent_tools(session.id) if "after" in result)
+    assert chf(goal["shortfall_chf"]) in question["reaction"] and "May 2028" in question["reaction"]
+    assert ground_turn(session, question["reaction"])
+    assert execute_tool("next_question", {}, session) == question
+    assert spy.call_count == 1 and not session.plan.person("B").goals
 
 
 def test_existing_profile_goal_skips_known_fields(session):
@@ -99,8 +179,12 @@ def test_existing_profile_goal_skips_known_fields(session):
     ])])
     turn(session, "I want a sabbatical.")
     q = execute_tool("next_question", {}, session)
-    assert q["key"] == "sabbatical.flexibility"
-    assert q["dimension"] == "risk_flexibility"
+    assert q["key"] == "life_priorities"
+    turn(session, "I want enough time for my family.")
+    assert execute_tool("next_question", {}, session)["key"] == "sabbatical.why"
+    turn(session, "I need time to reset.")
+    q = execute_tool("next_question", {}, session)
+    assert q["key"] == "sabbatical.flexibility" and q["reaction"]
 
 
 def test_goal_draft_requires_confirmed_complete_goal_and_no_mutation(session):

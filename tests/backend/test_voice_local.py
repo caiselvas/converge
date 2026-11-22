@@ -45,7 +45,8 @@ def test_local_socket_stt_tool_llm_tts_and_text_memory(simple_plan, tmp_path, mo
         session = client.post("/api/voice/session", json={"person": "A"}).json()
         assert "token" not in session
         with client.websocket_connect(session["socket_path"]) as socket:
-            assert "AI discovery assistant" in socket.receive_json()["text"]
+            greeting = socket.receive_json()["text"]
+            assert "AI discovery assistant" in greeting and "Over the next five years" in greeting
             assert socket.receive_json()["state"] == "speaking"
             assert socket.receive_json()["state"] == "listening"
             socket.send_json({"type": "start"})

@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import Field
 
 from converge import ai
+from converge.engine import months as M
 from converge.engine.changes import apply_changes
 from converge.engine.evaluate import chf, evaluate
 from converge.engine.recommend import recommend
@@ -44,9 +45,11 @@ class SummaryArgs(ai.StructuredOutput):
 
 class ChangesArgs(ai.StructuredOutput):
     changes: list[Change] = Field(default_factory=list, max_length=50)
+    focus_goal: str | None = None
 
 
-class ProposalArgs(ChangesArgs):
+class ProposalArgs(ai.StructuredOutput):
+    changes: list[Change] = Field(default_factory=list, max_length=50)
     from_confirmed_goals: bool = False
 
 
@@ -54,25 +57,48 @@ class MemoryArgs(ai.StructuredOutput):
     items: list[Item] = Field(max_length=12)
 
 
-def summary(plan: Plan, person: str | None = None) -> dict:
+def summary(plan: Plan, person: str | None = None, *, focus: tuple[str, str] | None = None) -> dict:
     ev = evaluate(plan)
     people = [{k: p[k] for k in ("id", "name", "min_cash", "min_cash_month", "goals")}
               for p in ev["people"] if person is None or p["id"] == person]
     issues = [i for i in ev["issues"] if person is None or i["person"] == person]
-    status = "conflict" if any(i["severity"] == "hard" for i in issues) else "attention" if issues else "on_track"
+    hard = next((i for i in issues if i["severity"] == "hard"), None)
+    status = "conflict" if hard else "attention" if issues else "on_track"
     lowest = min(people, key=lambda p: p["min_cash"])
-    return dict(verdict=status, people=people, issues=[i["title"] for i in issues],
-                speakable=f"In this simulation, {lowest['name']}'s lowest cash is {chf(lowest['min_cash'])}.")
+    speakable = f"In this simulation, {lowest['name']}'s lowest cash is {chf(lowest['min_cash'])}."
+    if hard and hard["kind"] == "liquidity_floor":
+        name = plan.person(hard["person"]).name
+        speakable = f"In this simulation, {name} falls {chf(hard['amount_chf'])} below their cash buffer in {M.label(hard['worst_month'])}."
+    elif hard:
+        speakable = f"In this simulation, {hard['title'][0].lower() + hard['title'][1:]}."
+    elif focus:
+        viewer, title = focus
+        goal = next((g for p in people if p["id"] == viewer for g in p["goals"] if g["name"] == title), None)
+        if goal and not goal["in_horizon"]:
+            speakable = "In this simulation, that goal's deadline is beyond the plan horizon."
+        elif goal and not goal["met"]:
+            name = plan.person(viewer).name
+            speakable = f"In this simulation, {name} falls {chf(goal['shortfall_chf'])} short of the goal in {M.label(goal['target_date'])}."
+        elif goal and goal["met"]:
+            speakable = f"In this simulation, the goal fits by {M.label(goal['target_date'])}."
+        elif title == "Home" and ev["property"] and not ev["property"]["in_horizon"]:
+            speakable = "In this simulation, the home purchase is beyond the plan horizon."
+        elif title == "Home" and ev["property"]:
+            speakable = f"In this simulation, the home fits in {M.label(ev['property']['purchase'])}."
+    return dict(verdict=status, people=people, issues=[i["title"] for i in issues], speakable=speakable)
 
 
-def goal_changes(plan: Plan, person: str, items: list[dict]) -> list[Change]:
+def goal_changes(plan: Plan, person: str, items: list[dict], *, preview: tuple[str, dict] | None = None) -> list[Change]:
     from pydantic import TypeAdapter, ValidationError
 
-    known = known_items(items, confirmed=True)
+    known = preview[1] if preview else known_items(items, confirmed=True)
     personal = list(plan.person(person).goals)
     original = list(personal)
     changes = []
-    for slug in dict.fromkeys(item["key"] for item in items if item["dimension"] == "goals" and item["status"] == "confirmed"):
+    slugs = [preview[0]] if preview else dict.fromkeys(
+        item["key"] for item in items if item["dimension"] == "goals" and item["status"] == "confirmed"
+    )
+    for slug in slugs:
         title = known.get(slug)
         amount = known.get(f"{slug}.amount")
         date = known.get(f"{slug}.date")
@@ -85,6 +111,9 @@ def goal_changes(plan: Plan, person: str, items: list[dict]) -> list[Change]:
         if slug == "home":
             changes.extend([Change(path="shared.property.price", value=amount),
                             Change(path="shared.property.target_date", value=target)])
+            if preview:
+                changes.extend([Change(path="shared.property.enabled", value=True),
+                                Change(path="shared.property.purchase", value=target)])
             continue
         priority = known.get(f"{slug}.priority")
         existing = next((g for g in personal if g.id == f"discovery-{slug}" or g.name.casefold() == title.casefold()), None)
@@ -108,7 +137,7 @@ TOOLS = {
     "list_recommendations": (Empty, "List options verified by the simulation engine."),
     "propose_changes": (ProposalArgs, "Queue validated changes for review in the app. Use from_confirmed_goals for saved goals."),
     "save_memory": (MemoryArgs, "Save pending evidence-backed observations from the last user turn. The viewer confirms them in the app."),
-    "next_question": (Empty, "Get the single next discovery question."),
+    "next_question": (Empty, "Get one next discovery question and any reaction from the simulation engine."),
 }
 
 
@@ -127,7 +156,8 @@ def execute_tool(name: str, args: dict, session: Session) -> dict:
         result = summary(session.plan, person if parsed.scope == "personal" else None)
     elif name == "simulate_changes":
         after = apply_changes(session.plan, parsed.changes)
-        result = dict(before=summary(session.plan), after=summary(after))
+        focus = (person, parsed.focus_goal) if parsed.focus_goal else None
+        result = dict(before=summary(session.plan), after=summary(after, focus=focus))
         if not any(ch.path.startswith("people.") and ".goals" in ch.path for ch in parsed.changes):
             result["draft_changes"] = [ch.model_dump() for ch in parsed.changes]
     elif name == "list_recommendations":
@@ -150,7 +180,17 @@ def execute_tool(name: str, args: dict, session: Session) -> dict:
             raise ValueError("Wait for a user turn before saving memory.")
         return dict(memory=session.memory.save(session.id, last["id"], parsed.items, session.last_question))
     else:
-        return next_question(session.memory, session.id, session.plan)
+        def simulate_goal(slug: str, fields: dict) -> str:
+            changes = goal_changes(session.plan, person, [], preview=(slug, fields))
+            result = execute_tool("simulate_changes", {
+                "changes": [ch.model_dump() for ch in changes], "focus_goal": fields[slug],
+            }, session)
+            return result["after"]["speakable"]
+
+        question = next_question(session.memory, session.id, session.plan, simulate_goal)
+        if question.get("reaction"):
+            session.memory.record_tool(session.id, {"reaction": question["reaction"]})
+        return {k: v for k, v in question.items() if k not in {"previews", "skipped", "goal_keys"}}
     session.memory.record_tool(session.id, {key: value for key, value in result.items() if key != "draft_changes"})
     return result
 

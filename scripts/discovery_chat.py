@@ -8,6 +8,13 @@ from converge.voice.routes import ingest_turn, memory_db
 from converge.voice.tools import Session, execute_tool
 
 
+def ask(session):
+    prompt = execute_tool("next_question", {}, session)
+    if prompt.get("reaction"):
+        print(prompt["reaction"])
+    print(prompt["question"])
+
+
 async def chat(args):
     if not args.provider:
         config.LLM_PROVIDER = "auto"
@@ -19,7 +26,7 @@ async def chat(args):
     session = Session(memory, memory.start(person), plan)
     print("AI discovery assistant · synthetic data · simulations only")
     print("Commands: /memory, /confirm ID, /draft, /summary, /clear, /quit")
-    print(execute_tool("next_question", {}, session)["question"])
+    ask(session)
     while True:
         try:
             text = input("> ").strip()
@@ -41,7 +48,7 @@ async def chat(args):
                 session = Session(memory, memory.start(person), plan)
             else:
                 await ingest_turn(session, "user", text)
-                print(execute_tool("next_question", {}, session)["question"])
+                ask(session)
         except (EOFError, KeyboardInterrupt):
             return
         except ValueError as error:

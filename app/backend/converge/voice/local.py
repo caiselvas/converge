@@ -143,7 +143,7 @@ async def run_turn(session: Session, pcm: bytes, pipeline: Pipeline, send, histo
     session.memory.save(session.id, evidence, offline(text, question), question)
     await send({"type": "transcript", "speaker": "user", "text": text})
     q = execute_tool("next_question", {}, session)
-    messages = [{"role": "system", "content": INSTRUCTIONS + "\nUse this next question if continuing discovery: " + q["question"]},
+    messages = [{"role": "system", "content": INSTRUCTIONS + "\nUse this next question if continuing discovery: " + json.dumps({"question": q["question"], "reaction": q.get("reaction")})},
                 *history[-8:], {"role": "user", "content": text}]
     for _ in range(4):
         message = await asyncio.to_thread(pipeline.llm, messages)
