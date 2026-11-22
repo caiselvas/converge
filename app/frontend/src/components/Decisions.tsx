@@ -4,7 +4,7 @@ import * as Popover from "@radix-ui/react-popover";
 import { Briefcase, CornerDownLeft, Gauge, Home, Loader2, Sparkles, X } from "lucide-react";
 import { useState } from "react";
 
-import { api } from "@/lib/api";
+import { api, llmProviderLabel } from "@/lib/api";
 import { pct } from "@/lib/format";
 import { useStore } from "@/lib/store";
 import type { InterpretResponse } from "@/lib/types";
@@ -80,7 +80,7 @@ function StressForm() {
 }
 
 function Ask() {
-  const { viewer, draft, addChanges, ws, toast } = useStore();
+  const { viewer, draft, addChanges, toast } = useStore();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<InterpretResponse | null>(null);
@@ -101,7 +101,7 @@ function Ask() {
         <form onSubmit={(e) => { e.preventDefault(); run(); }} className="relative min-w-0 flex-1 basis-[260px]">
           <Sparkles size={15} className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-accent" />
           <input value={text} onChange={(e) => setText(e.target.value)} aria-label="Describe a change in your own words"
-            placeholder={ws?.llm_available ? "Describe a change, e.g. “Emil takes 6 months off in 2028”" : "Describe a change, e.g. “Emil takes 6 months off from Jan 2028”"}
+            placeholder="Describe a change, e.g. “Emil takes 12 months off from Jan 2028”"
             className="h-10 w-full rounded-full border border-line-strong bg-white pr-11 pl-9 text-[13.5px] outline-none placeholder:text-subtle focus:ring-2 focus:ring-accent/30" />
           <button type="submit" aria-label="Interpret" disabled={busy || !text.trim()} className="absolute top-1/2 right-1.5 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-ink text-white disabled:opacity-30">
             {busy ? <Loader2 size={13} className="animate-spin" /> : <CornerDownLeft size={13} />}
@@ -113,7 +113,7 @@ function Ask() {
           {res && (
             <>
               <div className="flex items-center justify-between">
-                <span className="text-[12px] text-muted">{res.mode === "llm" ? "Understood by Claude · checked by the engine" : "Understood by the built-in parser"}</span>
+                <span className="text-[12px] text-muted">{res.mode === "llm" && res.provider ? `Understood by ${llmProviderLabel[res.provider]} · checked by the engine` : "Understood by the built-in parser"}</span>
                 <button aria-label="Close" onClick={() => setRes(null)} className="text-subtle hover:text-ink"><X size={15} /></button>
               </div>
               {res.notice && <p className="mt-1 text-[12px] text-warn">{res.notice}</p>}

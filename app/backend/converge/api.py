@@ -92,7 +92,9 @@ async def _data_err(_, exc: DataUnavailableError):
 
 @app.get("/api/health")
 def health():
-    return dict(ok=True, llm_available=ai.llm_available(), llm_model=config.ANTHROPIC_MODEL if ai.llm_available() else None)
+    provider = config.llm_provider()
+    available = ai.llm_available()
+    return dict(ok=True, llm_available=available, llm_model=ai.llm_model(provider) if provider and available else None)
 
 
 @app.get("/api/workspace")

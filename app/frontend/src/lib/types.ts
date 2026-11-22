@@ -316,8 +316,11 @@ export interface AssumptionRow {
   source_detail: { name: string; url: string | null; date: string } | null;
 }
 
+export type LlmProvider = "anthropic" | "openai";
+
 export interface InterpretResponse {
   mode: "llm" | "offline";
+  provider?: LlmProvider;
   model: string | null;
   summary: string;
   clarification: string | null;
@@ -329,6 +332,7 @@ export interface InterpretResponse {
 
 export interface ExplainResponse {
   mode: "llm" | "deterministic";
+  provider?: LlmProvider;
   model?: string;
   text: string;
   grounded: boolean;

@@ -7,9 +7,11 @@ import { CashChart, ChartLegend } from "./charts/CashChart";
 import { Decisions } from "./Decisions";
 import { Recommendations } from "./Recommendations";
 import { Avatar, Segmented, Skeleton, clsx } from "./ui";
+import { api, llmProviderLabel } from "@/lib/api";
 import { chf, monthLabel, pct } from "@/lib/format";
+import { mergeChanges } from "@/lib/plan";
 import { useDisplayed, useStore } from "@/lib/store";
-import type { Evaluation, Issue } from "@/lib/types";
+import type { Change, Evaluation, ExplainResponse, Issue } from "@/lib/types";
 
 function headline(ev: Evaluation): { title: string; sub: string; issue: Issue | null } {
   const hard = ev.issues.find((i) => i.severity === "hard");
@@ -42,8 +44,45 @@ function headline(ev: Evaluation): { title: string; sub: string; issue: Issue | 
   };
 }
 
+function Explanation({ changes }: { changes: Change[] }) {
+  const [result, setResult] = useState<ExplainResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const explain = async () => {
+    setBusy(true);
+    setFailed(false);
+    try {
+      setResult(await api.explain(changes));
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-4 border-t border-line pt-3 text-[13px]" aria-live="polite">
+      {result ? (
+        <>
+          <p className="text-muted">{result.provider ? llmProviderLabel[result.provider] : "Engine summary"}</p>
+          {result.notice && <p className="mt-1 text-warn">{result.notice}</p>}
+          <p className="mt-1 text-ink-2">{result.text}</p>
+        </>
+      ) : (
+        <>
+          <button onClick={explain} disabled={busy} className="font-medium text-accent hover:underline disabled:opacity-60">
+            {busy ? "Explaining…" : "Explain this result"}
+          </button>
+          {failed && <p className="mt-1 text-warn">Could not load the explanation.</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
 function Why({ issue, others }: { issue: Issue; others: Issue[] }) {
+  const { plan, ws, draft, preview } = useStore();
   const max = Math.max(1, ...issue.drivers.map((d) => d.amount_chf));
+  const changes = plan && preview?.sim ? mergeChanges(draft, preview.changes, plan) : draft;
   return (
     <div className="fade-up mt-5 max-w-2xl rounded-2xl border border-line bg-white p-5">
       {issue.drivers.length > 0 && (
@@ -65,6 +104,7 @@ function Why({ issue, others }: { issue: Issue; others: Issue[] }) {
           Also: {others.map((o) => o.title).join(" · ")}
         </div>
       )}
+      <Explanation key={JSON.stringify([ws?.versions[0], changes])} changes={changes} />
     </div>
   );
 }

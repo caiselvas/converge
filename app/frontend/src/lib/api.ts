@@ -1,6 +1,8 @@
 import type {
-  AssumptionRow, Change, ExplainResponse, InterpretResponse, Proposal, RecResponse, SimResponse, Workspace,
+  AssumptionRow, Change, ExplainResponse, InterpretResponse, LlmProvider, Proposal, RecResponse, SimResponse, Workspace,
 } from "./types";
+
+export const llmProviderLabel = { anthropic: "Claude", openai: "OpenAI" } satisfies Record<LlmProvider, string>;
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {

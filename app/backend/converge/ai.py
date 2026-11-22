@@ -16,6 +16,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+from typing import TypeVar
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from converge import config
 from converge.engine import months as M
@@ -24,57 +27,81 @@ from converge.models import Change, Plan
 
 log = logging.getLogger("converge.ai")
 
-INTERPRET_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "summary": {"type": "string", "description": "One sentence restating the scenario in plain language"},
-        "changes": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "number": {"anyOf": [{"type": "number"}, {"type": "null"}]},
-                    "text": {"anyOf": [{"type": "string"}, {"type": "null"}]},
-                    "flag": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
-                },
-                "required": ["path", "number", "text", "flag"],
-                "additionalProperties": False,
-            },
-        },
-        "career_break": {
-            "anyOf": [
-                {"type": "null"},
-                {
-                    "type": "object",
-                    "properties": {
-                        "person_id": {"type": "string"},
-                        "start": {"type": "string", "description": "YYYY-MM"},
-                        "months": {"type": "integer"},
-                        "income_pct": {"type": "number"},
-                        "one_off_cost_chf": {"type": "number"},
-                    },
-                    "required": ["person_id", "start", "months", "income_pct", "one_off_cost_chf"],
-                    "additionalProperties": False,
-                },
-            ]
-        },
-        "clarification": {"anyOf": [{"type": "string"}, {"type": "null"}],
-                          "description": "Question to ask if the request is ambiguous or unsupported"},
-    },
-    "required": ["summary", "changes", "career_break", "clarification"],
-    "additionalProperties": False,
-}
+PROVIDER_NAMES = {"anthropic": "Claude", "openai": "OpenAI"}
+
+
+class StructuredOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class ProposedChange(StructuredOutput):
+    path: str
+    number: float | None
+    text: str | None
+    flag: bool | None
+
+
+class ProposedBreak(StructuredOutput):
+    person_id: str
+    start: str = Field(description="YYYY-MM")
+    months: int
+    income_pct: float
+    one_off_cost_chf: float
+
+
+class Interpretation(StructuredOutput):
+    summary: str
+    changes: list[ProposedChange]
+    career_break: ProposedBreak | None
+    clarification: str | None
+
+
+class Explanation(StructuredOutput):
+    text: str
+
+
+Output = TypeVar("Output", bound=StructuredOutput)
+
+
+class MissingAPIKey(RuntimeError):
+    pass
+
+
+class IncompleteResponse(RuntimeError):
+    pass
+
+
+def llm_model(provider: config.Provider) -> str:
+    return config.ANTHROPIC_MODEL if provider == "anthropic" else config.OPENAI_MODEL
+
+
+def _api_key(provider: config.Provider) -> str:
+    return config.ANTHROPIC_API_KEY if provider == "anthropic" else config.OPENAI_API_KEY
 
 
 def llm_available() -> bool:
-    return bool(config.ANTHROPIC_API_KEY)
+    provider = config.llm_provider()
+    return provider is not None and bool(_api_key(provider))
 
 
-def _client():
-    import anthropic
+def _client(provider: config.Provider):
+    key = _api_key(provider)
+    if not key:
+        raise MissingAPIKey
+    if provider == "anthropic":
+        from anthropic import Anthropic
 
-    return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY, timeout=45.0, max_retries=1)
+        return Anthropic(api_key=key, timeout=20.0, max_retries=0)
+    from openai import OpenAI
+
+    return OpenAI(api_key=key, timeout=20.0, max_retries=0)
+
+
+def _failure_notice(provider: config.Provider, action: str, error: Exception) -> str:
+    reason = type(error).__name__
+    name = PROVIDER_NAMES[provider]
+    log.warning("%s %s failed (%s)", name, action, reason)
+    return f"{name} {action} failed ({reason})."
 
 
 def _context(plan: Plan, viewer: str) -> str:
@@ -107,51 +134,71 @@ def interpret(plan: Plan, text: str, viewer: str) -> dict:
     text = text.strip()
     if not text:
         raise ValueError("empty request")
-    if llm_available():
-        try:
-            return _interpret_llm(plan, text, viewer)
-        except Exception as e:  # network/API failure -> offline parser, reported honestly
-            log.warning("LLM interpret failed: %s", e)
-            out = _interpret_offline(plan, text, viewer)
-            out["notice"] = f"The language model was unavailable ({type(e).__name__}); used the offline parser instead."
-            return out
-    return _interpret_offline(plan, text, viewer)
-
-
-def _call_structured(system: str, user: str, schema: dict, max_tokens: int = 4000) -> dict:
-    client = _client()
-    kwargs = dict(
-        model=config.ANTHROPIC_MODEL,
-        max_tokens=max_tokens,
-        system=system,
-        messages=[{"role": "user", "content": user}],
-        output_config={"effort": "low", "format": {"type": "json_schema", "schema": schema}},
-    )
+    provider = config.llm_provider()
+    if provider is None:
+        return _interpret_offline(plan, text, viewer)
     try:
-        resp = client.beta.messages.create(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kwargs)
-    except TypeError:
-        resp = client.messages.create(**kwargs)
-    if resp.stop_reason == "refusal":
-        raise RuntimeError("model declined the request")
-    txt = next(b.text for b in resp.content if b.type == "text")
-    return json.loads(txt)
+        return _interpret_llm(plan, text, viewer, provider)
+    except Exception as error:
+        out = _interpret_offline(plan, text, viewer)
+        out["notice"] = f"{_failure_notice(provider, 'interpretation', error)} Used the built-in parser."
+        return out
 
 
-def _interpret_llm(plan: Plan, text: str, viewer: str) -> dict:
-    data = _call_structured(SYSTEM, f"Context:\n{_context(plan, viewer)}\n\nRequest:\n{text}", INTERPRET_SCHEMA)
-    changes: list[Change] = []
-    rejected: list[str] = []
-    for c in data.get("changes", []):
-        value = c["number"] if c["number"] is not None else (c["text"] if c["text"] is not None else c["flag"])
-        changes.append(Change(path=c["path"], value=value))
-    cb = data.get("career_break")
+def _call_structured(
+    provider: config.Provider, model: str, system: str, user: str, output: type[Output], max_tokens: int,
+) -> Output:
+    schema = output.model_json_schema()
+    client = _client(provider)
+    if provider == "anthropic":
+        output_config = {"format": {"type": "json_schema", "schema": schema}}
+        options = {}
+        if model == "claude-haiku-5-5":
+            output_config["effort"] = "low"
+            options["thinking"] = {"type": "disabled"}
+        response = client.messages.create(
+            model=model, max_tokens=max_tokens, system=system,
+            messages=[{"role": "user", "content": user}], output_config=output_config, **options,
+        )
+        if response.stop_reason != "end_turn":
+            raise IncompleteResponse
+        text = "".join(block.text for block in response.content if block.type == "text")
+    else:
+        options = {"reasoning": {"effort": "none"}} if model == "gpt-6-luna" else {}
+        response = client.responses.create(
+            model=model, max_output_tokens=max_tokens, instructions=system, input=user, store=False,
+            text={"format": {"type": "json_schema", "name": output.__name__, "schema": schema, "strict": True}},
+            **options,
+        )
+        if response.status != "completed":
+            raise IncompleteResponse
+        text = response.output_text
+    if not text:
+        raise IncompleteResponse
+    return output.model_validate_json(text)
+
+
+def _interpret_llm(plan: Plan, text: str, viewer: str, provider: config.Provider) -> dict:
+    model = llm_model(provider)
+    data = _call_structured(
+        provider, model, SYSTEM, f"Context:\n{_context(plan, viewer)}\n\nRequest:\n{text}", Interpretation, 1000,
+    )
+    changes = [
+        Change(path=c.path, value=next((value for value in (c.number, c.text, c.flag) if value is not None), None))
+        for c in data.changes
+    ]
+    cb = data.career_break
+    rejected_break = []
     if cb:
-        changes.append(_career_break_change(plan, cb["person_id"], cb["start"], cb["months"], cb["income_pct"], cb["one_off_cost_chf"]))
+        try:
+            changes.append(_career_break_change(plan, cb.person_id, cb.start, cb.months, cb.income_pct, cb.one_off_cost_chf))
+        except KeyError:
+            rejected_break.append("Career break: person is outside this plan.")
     valid, rejected = _validate_each(plan, changes)
     return dict(
-        mode="llm", model=config.ANTHROPIC_MODEL, summary=data.get("summary", ""),
-        clarification=data.get("clarification"), changes=[c.model_dump() for c in valid],
-        described=_describe(plan, valid), rejected=rejected,
+        mode="llm", provider=provider, model=model, summary=data.summary,
+        clarification=data.clarification, changes=[c.model_dump() for c in valid],
+        described=_describe(plan, valid), rejected=rejected + rejected_break,
     )
 
 
@@ -289,11 +336,11 @@ def _interpret_offline(plan: Plan, text: str, viewer: str) -> dict:
 
     valid, rejected = _validate_each(plan, changes)
     if not valid:
-        notes.append("I could not map this to a supported change. Try e.g. “Emil takes 6 months off from Jan 2028” or "
+        notes.append("I could not map this to a supported change. Try e.g. “Emil takes 12 months off from Jan 2028” or "
                      "“buy a CHF 1.2M home in Oct 2028”.")
     return dict(
         mode="offline", model=None,
-        summary="Interpreted with the built-in rule-based parser (no language model configured).",
+        summary="Interpreted with the built-in parser.",
         clarification=notes[0] if notes else None,
         changes=[c.model_dump() for c in valid], described=_describe(plan, valid), rejected=rejected,
     )
@@ -375,27 +422,18 @@ def explain(ev: dict, recommendations: list[dict] | None = None) -> dict:
         property=ev.get("property") and {k: ev["property"][k] for k in ("purchase", "price", "deposit", "mortgage", "contributions")},
         options=[dict(title=r["title"], resolves=r["resolves"], tradeoffs=r["tradeoffs"]) for r in (recommendations or [])],
     )
-    fallback = deterministic_summary(ev)
-    if not llm_available():
-        return dict(mode="deterministic", text=fallback, grounded=True)
+    fallback = dict(mode="deterministic", text=deterministic_summary(ev), grounded=True)
+    provider = config.llm_provider()
+    if provider is None:
+        return fallback
+    model = llm_model(provider)
     try:
-        client = _client()
-        kwargs = dict(model=config.ANTHROPIC_MODEL, max_tokens=2000, system=EXPLAIN_SYSTEM,
-                      output_config={"effort": "low"},
-                      messages=[{"role": "user", "content": json.dumps(facts, default=str)}])
-        try:
-            resp = client.beta.messages.create(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kwargs)
-        except TypeError:
-            resp = client.messages.create(**kwargs)
-        if resp.stop_reason == "refusal":
-            raise RuntimeError("declined")
-        text = " ".join(b.text for b in resp.content if b.type == "text").strip()
-        ok, bad = grounded(text, facts)
-        if not ok:
-            return dict(mode="deterministic", text=fallback, grounded=True,
-                        notice=f"Language-model explanation discarded: it contained numbers not produced by the engine ({', '.join(f'{x:g}' for x in bad[:3])}).")
-        return dict(mode="llm", model=config.ANTHROPIC_MODEL, text=text, grounded=True)
-    except Exception as e:
-        log.warning("LLM explain failed: %s", e)
-        return dict(mode="deterministic", text=fallback, grounded=True,
-                    notice=f"Language model unavailable ({type(e).__name__}); showing the engine's own summary.")
+        response = _call_structured(provider, model, EXPLAIN_SYSTEM, json.dumps(facts, default=str), Explanation, 500)
+        text = response.text.strip()
+        if not text:
+            raise IncompleteResponse
+        if not grounded(text, facts)[0]:
+            return dict(**fallback, notice=f"{PROVIDER_NAMES[provider]} explanation failed grounding. Showing the engine summary.")
+        return dict(mode="llm", provider=provider, model=model, text=text, grounded=True)
+    except Exception as error:
+        return dict(**fallback, notice=f"{_failure_notice(provider, 'explanation', error)} Showing the engine summary.")
