@@ -81,6 +81,7 @@ class Question:
     options: tuple[Option, ...] = ()
     per_partner: bool = False
     topic: str = ""
+    role: Literal["taker", "partner"] | None = None
     source: Literal["assumption", "data"] = "assumption"
     min: float | None = None
     max: float | None = None
@@ -606,7 +607,80 @@ HAVE_CHILD = DecisionModule(
     notes=_child_notes,
 )
 
-MODULES: dict[str, DecisionModule] = {m.id: m for m in (MOVE_IN, BUY_HOME, HAVE_CHILD)}
+def _career_entry(plan: Plan, pid: str):
+    return next((b for b in plan.person(pid).career_breaks if not b.id.startswith("cb-child-")), None)
+
+
+def _career_value(key: str, default):
+    def suggest(plan: Plan, values: Values):
+        entry = _career_entry(plan, values["person"])
+        return getattr(entry, key) if entry else default(plan)
+    return suggest
+
+
+def _career_compile(plan: Plan, values: Values) -> list[Change]:
+    pid = values["person"]
+    person = plan.person(pid)
+    existing = _career_entry(plan, pid)
+    bid = existing.id if existing else "planner-break"
+    entry = dict(id=bid, start=values["start"], months=int(values["months"]),
+                 income_pct=values["income_kept"] * 100, one_off_cost_chf=values["break_cost"],
+                 label=existing.label if existing else "Career break")
+    breaks = [entry if b.id == bid else b.model_dump() for b in person.career_breaks]
+    if existing is None:
+        breaks.append(entry)
+    return [Change(path=f"people.{pid}.career_breaks", value=breaks)]
+
+
+def _support_changes(answer: str) -> list[Change]:
+    changes = [Change(path="shared.split.adjust_for_breaks", value=answer != "no")]
+    if answer != "no":
+        changes.append(Change(path="shared.split.break_support_share", value=0.5 if answer == "some" else 1))
+    return changes
+
+
+CAREER_BREAK = DecisionModule(
+    id="career-break",
+    title="Take a career break",
+    promise="Plan time away from work and see what it would take to keep both partners financially safe.",
+    active=lambda plan: any(_career_entry(plan, p.id) for p in plan.people),
+    questions=(
+        Question("person", "partner", "Who takes the break", "Who is planning time away from work?",
+                 "intention", "decision", suggest=lambda plan, v: next(
+                     (p.id for p in plan.people if _career_entry(plan, p.id)), plan.people[1].id)),
+        Question("start", "month", "Break starts", "When would the break start?", "intention", "decision",
+                 suggest=_career_value("start", lambda plan: M.add(plan.assumptions.start, 12))),
+        Question("months", "number", "Break length", "How many months would you take?", "intention", "decision",
+                 suggest=_career_value("months", lambda plan: 12), min=1, max=36, step=1, unit="months", integer=True),
+        Question("income_kept", "share", "Income kept", "How much of your usual net pay would you keep during the break?",
+                 "intention", "decision", suggest=lambda plan, v: _career_value("income_pct", lambda plan: 0)(plan, v) / 100,
+                 min=0, max=1, step=0.05),
+        Question("break_cost", "chf", "One-off costs", "What would you pay at the start, such as course fees?",
+                 "intention", "decision", suggest=_career_value("one_off_cost_chf", lambda plan: 0), min=0, step=100),
+        Question("why_break", "text", "Why it matters", "What would this break give you?",
+                 "couple", "priorities", per_partner=True, topic="Why it matters", role="taker"),
+        Question("break_date_flex", "choice", "Break timing", "Could you start the break later?",
+                 "couple", "priorities", per_partner=True, topic="Break timing", role="taker",
+                 options=(Option("fixed", "The start month is essential", ("firm", "no"), "firm"),
+                          Option("flexible", "I could start later", ("flexible", "yes"), "flexible"))),
+        Question("part_time", "choice", "Part-time work", "Would part-time work during the break be acceptable?",
+                 "couple", "priorities", per_partner=True, topic="Part-time work", role="taker",
+                 options=(Option("yes", "I could work part-time", ("yes",), "flexible"),
+                          Option("no", "I need to stop working", ("no",), "firm"))),
+        Question("cover_more", "choice", "Extra household support", "Would you cover more of the shared costs during the break?",
+                 "couple", "responsibilities", per_partner=True, topic="Household support", role="partner",
+                 options=(Option("yes", "Yes, in proportion to our income during the break", ("yes",), "flexible"),
+                          Option("some", "Some, halfway toward the income-based split", ("some",), "flexible"),
+                          Option("no", "Keep our usual split", ("no",), "firm"))),
+    ),
+    compile=_career_compile,
+    remove=lambda plan: [],
+    headline=lambda plan, v: f"{plan.person(v['person']).name} takes {int(v['months'])} months from {M.label(v['start'])}",
+    notes=lambda plan, v: ["Income and one-off costs are based on the amounts you enter."],
+)
+
+
+MODULES: dict[str, DecisionModule] = {m.id: m for m in (MOVE_IN, BUY_HOME, HAVE_CHILD, CAREER_BREAK)}
 
 
 def module(mid: str) -> DecisionModule:
@@ -689,7 +763,9 @@ def coerce(q: Question, v: Any, plan: Plan) -> Any:
     return v.strip()[:300]
 
 
-def _known(m: DecisionModule, q: Question, plan: Plan) -> bool:
+def _known(m: DecisionModule, q: Question, plan: Plan, values: Values) -> bool:
+    if m.id == "career-break" and not q.per_partner:
+        return bool(_career_entry(plan, values["person"])) if "person" in values else m.active(plan)
     if q.per_partner or (q.read is None and q.path is None):
         return False
     return bool(q.known_when(plan)) if q.known_when else m.active(plan)
@@ -704,8 +780,8 @@ def resolve(m: DecisionModule, plan: Plan, session: DecisionSession) -> tuple[Va
             continue
         if q.id in session.answers:
             values[q.id], sources[q.id] = session.answers[q.id], "answer"
-        elif _known(m, q, plan):
-            values[q.id], sources[q.id] = q.current(plan), "plan"
+        elif _known(m, q, plan, values):
+            values[q.id], sources[q.id] = (q.suggest(plan, values) if m.id == "career-break" else q.current(plan)), "plan"
         else:
             values[q.id] = q.suggest(plan, values) if q.suggest else q.current(plan)
             sources[q.id] = q.source if q.stage == "details" else "suggested"
@@ -722,12 +798,25 @@ def compile_changes(m: DecisionModule, plan: Plan, session: DecisionSession, val
         if q.path and not q.per_partner and _applies(q, values):
             raw.append(Change(path=q.path, value=values[q.id]))
     raw += m.compile(plan, values)
+    if m.id == "career-break" and _shared_known(plan):
+        other = next(p.id for p in plan.people if p.id != values["person"])
+        support = session.preferences.get("cover_more", {}).get(other)
+        if support:
+            raw += _support_changes(support)
     raw += session.adjustments
     latest: dict[str, Change] = {}
     for ch in raw:
         latest.pop(ch.path, None)
         latest[ch.path] = ch
-    changes = [ch for ch in latest.values() if not _same(get_value(plan, ch.path), ch.value)]
+    changes = []
+    for ch in latest.values():
+        try:
+            old = get_value(plan, ch.path)
+        except ChangeError:
+            changes.append(ch)
+        else:
+            if not _same(old, ch.value):
+                changes.append(ch)
     try:
         apply_changes(plan, changes)
     except ChangeError as e:
@@ -741,6 +830,14 @@ def _friendly(error: str) -> str:
     return error.replace("invalid plan after changes: ", "")
 
 
+def _answers_for(q: Question, values: Values, viewer: str) -> bool:
+    if q.role == "taker":
+        return viewer == values["person"]
+    if q.role == "partner":
+        return viewer != values["person"]
+    return True
+
+
 def pending(m: DecisionModule, plan: Plan, session: DecisionSession, viewer: str, values: Values) -> list[Question]:
     """Questions still open for this viewer, in asking order (plan questions first)."""
     plan_qs, prefs = [], []
@@ -748,9 +845,9 @@ def pending(m: DecisionModule, plan: Plan, session: DecisionSession, viewer: str
         if q.stage == "details" or not _applies(q, values):
             continue
         if q.per_partner:
-            if viewer not in session.preferences.get(q.id, {}):
+            if _answers_for(q, values, viewer) and viewer not in session.preferences.get(q.id, {}):
                 prefs.append(q)
-        elif q.id not in session.answers and not _known(m, q, plan):
+        elif q.id not in session.answers and not _known(m, q, plan, values):
             plan_qs.append(q)
     order = {"intention": 0, "couple": 1}
     return sorted(plan_qs, key=lambda q: order[q.stage]) + prefs
@@ -774,11 +871,14 @@ def apply_answers(m: DecisionModule, plan: Plan, session: DecisionSession, viewe
             session.answers[qid] = value
             session.answered_by[qid] = viewer
         changed.append(qid)
+    values, _ = resolve(m, plan, session)
     for qid, value in preferences.items():
         q = m.question(qid)
         if not q.per_partner:
             raise AnswerError(f"{_render(q.label, plan)} is not a personal preference.")
         value = coerce(q, value, plan)
+        if not _answers_for(q, values, viewer):
+            raise AnswerError("This question is for the other partner.")
         mine = session.preferences.setdefault(qid, {})
         if value is None:
             mine.pop(viewer, None)
@@ -797,7 +897,35 @@ def absorb(m: DecisionModule, plan: Plan, session: DecisionSession, viewer: str,
     """
     by_path = {q.path: q for q in m.questions if q.path and not q.per_partner}
     rest: list[Change] = []
+
+    def record(answers: dict) -> None:
+        apply_answers(m, plan, session, viewer, answers, {})
+
+    compiled, errors = compile_changes(m, plan, session)
+    new_break_paths = {c.path for c in compiled if c.path.endswith(".career_breaks")}
+    touches_new_break = any(any(c.path.startswith(path + ".") for path in new_break_paths) for c in changes)
+    edited = apply_changes(apply_changes(plan, compiled) if touches_new_break and not errors else plan, changes)
     for ch in changes:
+        parts = ch.path.split(".")
+        if m.id == "career-break" and len(parts) >= 3 and parts[0] == "people" and parts[2] == "career_breaks":
+            pid = parts[1]
+            original = {b.id: b for b in plan.person(pid).career_breaks}
+            updated = edited.person(pid).career_breaks
+            changed = [b for b in updated if b != original.get(b.id)]
+            if len(changed) == 1:
+                b = changed[0]
+                record(dict(person=pid, start=b.start, months=b.months, income_kept=b.income_pct / 100,
+                            break_cost=b.one_off_cost_chf))
+                entry = _career_entry(plan, pid)
+                if entry is None and len(updated) == len(original) + 1:
+                    continue
+                if entry is not None and b.id == entry.id and len(updated) == len(original):
+                    continue
+        if m.id == "have-child" and ch.path == "shared.children" and edited.shared.children:
+            child = next((c for c in edited.shared.children if c not in plan.shared.children), edited.shared.children[0])
+            record(dict(birth=child.birth, birth_parent=child.leave.birth_parent, childcare_days=child.childcare_days_per_week,
+                        childcare_start=child.childcare_start_months_after_birth, childcare_until=child.childcare_until_age,
+                        everyday_cost=child.everyday_cost_monthly, allowance_recipient=child.allowance_recipient))
         q = by_path.get(ch.path)
         if q is not None:
             session.answers[q.id] = coerce(q, ch.value, plan)
@@ -805,7 +933,9 @@ def absorb(m: DecisionModule, plan: Plan, session: DecisionSession, viewer: str,
         else:
             rest.append(ch)
     session.adjustments = rest
-    apply_changes(plan, rest)  # validates; raises ChangeError
+    _, errors = compile_changes(m, plan, session)
+    if errors:
+        raise ChangeError(errors[0])
 
 
 # --------------------------------------------------------------------------- offline reading of free text
@@ -912,12 +1042,14 @@ def _brief(m: DecisionModule, plan: Plan, session: DecisionSession, values: Valu
     for p in plan.people:
         prefs, parts = [], []
         for q in m.questions:
-            if not q.per_partner or not _applies(q, values):
+            if not q.per_partner or not _applies(q, values) or not _answers_for(q, values, p.id):
                 continue
             v = session.preferences.get(q.id, {}).get(p.id)
             opt = next((o for o in q.options if o.value == v), None)
             prefs.append(dict(id=q.id, topic=q.topic, value=v, text=fmt(q, v, plan) if v is not None else None,
                               stance=opt.stance if opt else None))
+            if q.kind == "text" and v:
+                parts.append(str(v))
             if opt:
                 parts.append(_render(opt.label, plan))
                 if opt.stance == "flexible":
@@ -987,8 +1119,8 @@ def state(m: DecisionModule, plan: Plan, session: DecisionSession, viewer: str, 
     ctx = dict(values=values, eval=ev)
     open_qs = pending(m, plan, session, viewer, values)
     plan_open = [q for q in m.questions if not q.per_partner and q.stage != "details" and _applies(q, values)
-                 and q.id not in session.answers and not _known(m, q, plan)]
-    asked = [q for q in m.questions if q.stage != "details" and _applies(q, values)]
+                 and q.id not in session.answers and not _known(m, q, plan, values)]
+    asked = [q for q in m.questions if q.stage != "details" and _applies(q, values) and _answers_for(q, values, viewer)]
     stage = next((q.stage for q in open_qs), "review")
     described = []
     for ch in changes:
@@ -1009,7 +1141,7 @@ def state(m: DecisionModule, plan: Plan, session: DecisionSession, viewer: str, 
         brief=_brief(m, plan, session, values, sources, viewer),
         changes=[c.model_dump() for c in changes],
         described=described,
-        approvers=required_approvers(plan, changes) if changes else [],
+        approvers=([p.id for p in plan.people] if m.id == "career-break" else required_approvers(plan, changes)) if changes else [],
         errors=errors,
         adjustments=[c.model_dump() for c in session.adjustments],
         proposal=proposal,
@@ -1024,8 +1156,9 @@ def summary(m: DecisionModule, plan: Plan, session: DecisionSession | None, prop
     changes, _ = compile_changes(m, plan, s, values)
     status = _status(m, plan, session, proposal, changes)
     asked = [q for q in m.questions if q.stage != "details" and _applies(q, values)]
-    answered = sum(1 for q in asked if (q.per_partner and len(s.preferences.get(q.id, {})) == 2)
-                   or (not q.per_partner and (q.id in s.answers or _known(m, q, plan))))
+    answered = sum(1 for q in asked if (q.per_partner and all(p.id in s.preferences.get(q.id, {})
+                                                         for p in plan.people if _answers_for(q, values, p.id)))
+                   or (not q.per_partner and (q.id in s.answers or _known(m, q, plan, values))))
     headline = m.headline(plan, values) if status != "not_started" else None
     return dict(id=m.id, title=m.title, promise=m.promise, status=status, headline=headline,
                 progress=dict(done=answered, total=len(asked)), proposal_id=s.proposal_id)
@@ -1042,7 +1175,7 @@ def intake_context(m: DecisionModule, plan: Plan, session: DecisionSession, view
     other = next(p for p in plan.people if p.id != viewer)
     questions = []
     for q in m.questions:
-        if not _applies(q, values):
+        if not _applies(q, values) or not _answers_for(q, values, viewer):
             continue
         item = dict(id=q.id, kind=q.kind, label=_render(q.label, plan), prompt=_render(q.prompt, plan),
                     per_partner=q.per_partner, open=q.id in open_ids, stage=q.stage,

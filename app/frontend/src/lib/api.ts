@@ -1,5 +1,5 @@
 import type {
-  AssumptionRow, Change, DecisionState, DecisionStepIn, ExplainResponse, InterpretResponse, LlmProvider, Proposal, RecResponse,
+  AssumptionRow, Change, DecisionComparison, DecisionState, DecisionStepIn, ExplainResponse, InterpretResponse, LlmProvider, Proposal, RecResponse,
   SimResponse, Stress, Workspace,
 } from "./types";
 
@@ -46,7 +46,7 @@ export const api = {
   reject: (id: string, person: string) => call<Proposal>(`/proposals/${id}/reject`, { json: { person } }),
   preview: (id: string) => call<Omit<SimResponse, "plan" | "approvers">>(`/proposals/${id}/preview`),
   restore: (vid: number, author: string) => call<Proposal>(`/versions/${vid}/restore`, { json: { author } }),
-  reset: () => call<Workspace>("/reset", { method: "POST" }),
+  reset: (prepared = false) => call<Workspace>(`/reset?prepared=${prepared}`, { method: "POST" }),
   assumptions: () => call<AssumptionRow[]>("/assumptions"),
   provenance: (pid: string) => call<Record<string, unknown>>(`/provenance/${pid}`),
   interpret: (text: string, viewer: string, changes: Change[]) =>
@@ -55,7 +55,9 @@ export const api = {
   decision: (id: string, viewer: string, signal?: AbortSignal) =>
     call<DecisionState>(`/decisions/${encodeURIComponent(id)}?viewer=${encodeURIComponent(viewer)}`, { signal }),
   decisionStep: (id: string, body: DecisionStepIn) => call<DecisionState>(`/decisions/${encodeURIComponent(id)}/step`, { json: body }),
-  decisionPropose: (id: string, author: string, opts: { title?: string; remove?: boolean } = {}) =>
+  decisionCompare: (id: string, stress: Stress, signal?: AbortSignal) =>
+    call<DecisionComparison>(`/decisions/${encodeURIComponent(id)}/compare`, { json: { stress }, signal }),
+  decisionPropose: (id: string, author: string, opts: { title?: string; remove?: boolean; option_id?: string; stress?: Stress } = {}) =>
     call<Proposal>(`/decisions/${encodeURIComponent(id)}/propose`, { json: { author, ...opts } }),
   decisionRestart: (id: string, viewer: string) =>
     call<DecisionState>(`/decisions/${encodeURIComponent(id)}?viewer=${encodeURIComponent(viewer)}`, { method: "DELETE" }),

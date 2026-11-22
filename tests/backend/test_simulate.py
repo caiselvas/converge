@@ -243,3 +243,30 @@ def test_twins_share_leave_days_but_each_receive_an_allowance(simple_plan):
     assert both.people[1].family_allowance[0] == 2 * one.people[1].family_allowance[0]
     assert both.people[1].income[0] - one.people[1].income[0] == 215
     assert both.joint_in[4] == pytest.approx(2 * one.joint_in[4])
+
+
+def test_investment_sale_moves_cash_only_and_caps_at_available_portfolio(simple_plan):
+    simple_plan.people[0].investments = 30_000
+    plan = apply_changes(simple_plan, [C("people.A.sell_investments", [
+        {"month": "2027-04", "amount": 15_000},
+        {"month": "2027-06", "amount": 25_000},
+        {"month": "2040-06", "amount": 1000},
+    ])])
+    baseline = simulate(simple_plan).people[0]
+    result = simulate(plan)
+    a = result.people[0]
+    assert result.checks["ok"]
+    assert a.investment_sale[3] == 15_000 and a.investment_sale[5] == 15_000
+    assert a.cash[3] - baseline.cash[3] == 15_000
+    assert a.investments[3] == 15_000 and a.investments[5] == 0
+    assert a.income == baseline.income
+    assert a.net_worth == pytest.approx(baseline.net_worth, abs=1e-6)
+    assert sum(a.investment_sale) == 30_000
+
+
+@pytest.mark.parametrize("sale", [{"month": "2027-04", "amount": -1}, {"month": "2027-13", "amount": 1}])
+def test_invalid_investment_sale(simple_plan, sale):
+    from converge.engine.changes import ChangeError
+
+    with pytest.raises(ChangeError):
+        apply_changes(simple_plan, [C("people.A.sell_investments", [sale])])

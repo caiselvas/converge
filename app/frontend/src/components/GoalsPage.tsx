@@ -16,7 +16,7 @@ function FinancialGoals() {
       </p>
       <div className={scopedPerson ? "mt-4 max-w-[720px] space-y-4" : "mt-4 grid items-start gap-4 lg:grid-cols-2"}>
         {people.map((p) => <PersonGoalsCard key={p.id} person={p} base={plan.people[idx(p.id)]} title={!scopedPerson} />)}
-        {scopedPerson && <PersonCareerBreaks person={scopedPerson} base={plan.people[idx(scopedPerson.id)]} />}
+        {scopedPerson && <PersonCareerBreaks person={scopedPerson} />}
       </div>
     </section>
   );

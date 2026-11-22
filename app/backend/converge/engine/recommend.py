@@ -20,7 +20,7 @@ from converge.data.profiles import FLEXIBLE_KEYS
 from converge.engine import months as M
 from converge.engine.changes import apply_changes, describe, format_value, required_approvers
 from converge.engine.evaluate import chf, evaluate
-from converge.engine.simulate import simulate
+from converge.engine.simulate import SimResult, simulate
 from converge.models import Change, Plan
 
 # Disruption points per unit of each kind of adjustment (documented in docs/model.md).
@@ -35,6 +35,7 @@ UNIT_COST = {
     "break_partial": 1 / 20,  # 1 point per 20% of income earned during the break
     "break_later": 1 / 3,  # 1 point per 3 months a break is postponed
     "deposit": 1 / 0.01 * 0.5,  # 0.5 points per pp of deposit change
+    "sell_investments": 1 / 10_000,
     "goal": 2 / 6,  # 2 points per 6 months a goal is postponed (explicit concession)
 }
 
@@ -72,11 +73,80 @@ class Candidate:
         return sum(UNIT_COST[k] * v * w.get(k, 1.0) for k, v in self.cost.items())
 
 
+@dataclass(frozen=True)
+class Preference:
+    families: frozenset[str]
+    factor: float
+    respects: str
+    asks: str
+
+
+def _preferences(plan: Plan, answers: dict | None) -> list[Preference]:
+    rules = {
+        "date_flex": {
+            "fixed": (("delay",), 0, "keeps the home purchase month", ""),
+            "months": (("delay",), 0.5, "", "to move the home purchase"),
+            "year": (("delay",), 0.5, "", "to wait longer for the home"),
+        },
+        "budget_flex": {
+            "lower": (("budget",), 0.5, "uses a lower budget as requested", ""),
+            "trim": (("lifestyle",), 0.5, "trims spending as requested", ""),
+            "either": (("budget", "lifestyle"), 0.5, "uses a budget or spending change they can accept", ""),
+        },
+        "priority": {
+            "lifestyle": (("lifestyle",), 2, "keeps everyday spending", "to trim everyday spending"),
+            "speed": (("delay", "break_later"), 2, "keeps the planned dates", "to wait longer"),
+        },
+        "break_date_flex": {
+            "fixed": (("break_later",), 0, "keeps the break start month", ""),
+            "flexible": (("break_later",), 0.5, "", "to start the break later"),
+        },
+        "part_time": {
+            "yes": (("break_partial",), 0.5, "uses part-time work they can accept", ""),
+            "no": (("break_partial",), 0, "keeps the break free from work", ""),
+        },
+        "cover_more": {
+            "yes": (("support",), 0.5, "uses the extra household support they offered", ""),
+            "some": (("support", "split"), 0, "keeps household support within what they offered", ""),
+            "no": (("support", "split"), 0, "keeps the agreed household split", ""),
+        },
+    }
+    out = []
+    for question, partners in (answers or {}).items():
+        for pid, answer in partners.items():
+            rule = rules.get(question, {}).get(answer) if isinstance(answer, str) else None
+            if rule is None:
+                continue
+            families, factor, respects, asks = rule
+            name = next((p.name for p in plan.people if p.id == pid), None)
+            if name is None:
+                continue
+            if question == "budget_flex" and answer in ("lower", "trim"):
+                opposite = "lifestyle" if answer == "lower" else "budget"
+                action = "to trim spending instead" if answer == "lower" else "to lower the home budget instead"
+                out.append(Preference(frozenset({opposite}), 1.0, "", f"Asks {name} {action}."))
+            out.append(Preference(frozenset(families), factor,
+                                  f"For {name}, {respects}." if respects else "",
+                                  f"Asks {name} {asks}." if asks else ""))
+    return out
+
+
+def _preference_notes(kinds: tuple[str, ...], rules: list[Preference]) -> tuple[list[str], list[str]]:
+    respects, asks = [], []
+    for rule in rules:
+        touched = bool(rule.families.intersection(kinds))
+        if rule.respects and touched == (rule.factor < 1 and rule.factor > 0):
+            respects.append(rule.respects)
+        if touched and rule.asks:
+            asks.append(rule.asks)
+    return list(dict.fromkeys(respects)), list(dict.fromkeys(asks))
+
+
 def _round_to(x: float, step: float) -> float:
     return round(x / step) * step
 
 
-def _generate(plan: Plan, ev: dict) -> dict[str, list[Candidate]]:
+def _generate(plan: Plan, ev: dict, baseline: SimResult) -> dict[str, list[Candidate]]:
     """Single-lever candidates grouped by lever family, ordered by magnitude."""
     gens: dict[str, list[Candidate]] = {}
     a = plan.assumptions
@@ -165,6 +235,18 @@ def _generate(plan: Plan, ev: dict) -> dict[str, list[Candidate]]:
     for p in people:
         if p.id not in stressed:
             continue
+        floor_issue = next((x for x in hard if x["id"] == f"floor:{p.id}"), None)
+        if p.investments > 0 and floor_issue:
+            month = floor_issue["month"]
+            balance = next(s for s in baseline.people if s.pid == p.id)
+            available = balance.investments[M.index(month, a.start)]
+            full = math.ceil(floor_issue["amount_chf"] / 100) * 100
+            for amount in sorted({min(available, full * fraction) for fraction in (0.5, 1, 1.25)} - {0}):
+                sales = [sale.model_dump() for sale in p.sell_investments]
+                sales.append(dict(month=month, amount=amount))
+                add(f"sell_investments:{p.id}", Candidate(
+                    ("sell_investments",), [Change(path=f"people.{p.id}.sell_investments", value=sales)],
+                    {"sell_investments": amount}, [f"{p.name} sells {chf(amount)} of investments in {M.label(month)}"]))
         flex = [c for c in p.categories if c.key in FLEXIBLE_KEYS and c.budget_monthly > 0]
         if flex:
             for pct in (0.10, 0.20, 0.30, 0.40):
@@ -216,9 +298,8 @@ def _run(plan: Plan, c: Candidate, base_soft: set[str]) -> Candidate:
         c.ev = None
         return c
     res = simulate(cand_plan)
-    c.ev = evaluate(cand_plan, res)
+    c.ev = evaluate(cand_plan, res, include_series=False)
     c.sim_ok = bool(res.checks["ok"])
-    c.extras["plan"] = cand_plan
     soft_ids = {i["id"] for i in c.ev["issues"] if i["severity"] == "soft"}
     c.extras["new_soft"] = soft_ids - base_soft
     return c
@@ -240,17 +321,32 @@ def _min_headroom_ratio(ev: dict) -> float:
 
 def _total_cost(c: Candidate, weights: dict | None = None) -> float:
     # +3 per newly created soft issue, +1 per extra lever (simpler plans are easier to agree on).
-    return c.disruption(weights) + 3.0 * len(c.extras.get("new_soft", ())) + 1.0 * (len(c.kinds) - 1)
+    combined = {k: (weights or {}).get(k, 1) * c.extras.get("preference_weights", {}).get(k, 1) for k in c.kinds}
+    return c.disruption(combined) + 3.0 * len(c.extras.get("new_soft", ())) + 1.0 * (len(c.kinds) - 1)
 
 
-def search(plan: Plan, max_pairs_per_family: int = 5) -> tuple[list[Candidate], dict]:
-    ev0 = evaluate(plan)
+def search(plan: Plan, max_pairs_per_family: int = 5, preferences: dict | None = None) -> tuple[list[Candidate], dict]:
+    baseline = simulate(plan)
+    ev0 = evaluate(plan, baseline, include_series=False)
     base_soft = {i["id"] for i in ev0["issues"] if i["severity"] == "soft"}
-    gens = _generate(plan, ev0)
+    if not ev0["issues"]:
+        return [], ev0
+    rules = _preferences(plan, preferences)
+    pref_weights = {}
+    for rule in rules:
+        for family in rule.families:
+            pref_weights[family] = pref_weights.get(family, 1) * rule.factor
+    gens = {fam: cs for fam, cs in _generate(plan, ev0, baseline).items()
+            if all(pref_weights.get(kind, 1) for kind in cs[0].kinds)}
+
+    def run(c: Candidate) -> Candidate:
+        c.extras["preference_weights"] = pref_weights
+        c.extras["preference_notes"] = _preference_notes(c.kinds, rules)
+        return _run(plan, c, base_soft)
     singles: list[Candidate] = []
     for fam, cands in gens.items():
         for c in cands:
-            singles.append(_run(plan, c, base_soft))
+            singles.append(run(c))
 
     # Pairs: combine the gentlest levels of two different families. For each
     # family keep the smallest levels plus the smallest level that already
@@ -269,12 +365,12 @@ def search(plan: Plan, max_pairs_per_family: int = 5) -> tuple[list[Candidate], 
                 cost = dict(c1.cost)
                 for k, v in c2.cost.items():
                     cost[k] = cost.get(k, 0) + v
-                pairs.append(_run(plan, Candidate(c1.kinds + c2.kinds, c1.changes + c2.changes, cost,
-                                                  c1.title_parts + c2.title_parts), base_soft))
+                pairs.append(run(Candidate(c1.kinds + c2.kinds, c1.changes + c2.changes, cost,
+                                           c1.title_parts + c2.title_parts)))
     return singles + pairs, ev0
 
 
-def _select(cands: list[Candidate], n: int) -> list[tuple[str, Candidate]]:
+def _select(cands: list[Candidate], n: int, comparison: bool = False, safety: bool = False) -> list[tuple[str, Candidate]]:
     """Best candidate per strategy, preferring options that share no lever with earlier picks."""
     feas = [c for c in cands if _feasible(c)]
 
@@ -286,7 +382,28 @@ def _select(cands: list[Candidate], n: int) -> list[tuple[str, Candidate]]:
             least = min(_total_cost(c) for c in feas)
             pool = [c for c in feas if _total_cost(c) <= least * 2 + 4]
             return sorted(pool, key=lambda c: (-_min_headroom_ratio(c.ev), _total_cost(c)))
-        return sorted(feas, key=lambda c: (_total_cost(c, weights), -_min_headroom_ratio(c.ev)))
+        return sorted(feas, key=lambda c: (
+            len(c.kinds) if comparison else 0,
+            _total_cost(c, weights) - (4 * _min_headroom_ratio(c.ev) if safety else 0),
+            -_min_headroom_ratio(c.ev),
+        ))
+
+    if comparison:
+        if n <= 0:
+            return []
+        chosen = []
+        used = set()
+        for strat in STRATEGIES:
+            ranked = sorted(ranked_for(strat), key=lambda c: len(c.kinds))
+            for c in ranked:
+                if c.kinds[0] in used:
+                    continue
+                chosen.append((strat, c))
+                used.add(c.kinds[0])
+                break
+            if len(chosen) >= n:
+                break
+        return chosen
 
     chosen: list[tuple[str, Candidate]] = []
     for strict in (True, False):
@@ -399,9 +516,12 @@ def _explain(plan: Plan, c: Candidate, ev0: dict, strat: str) -> dict:
             affordability_ratio=[(pr0["affordability"] or {}).get("ratio"), (pr1["affordability"] or {}).get("ratio")],
         )
     title = " + ".join(c.title_parts)
+    respects, asks = c.extras.get("preference_notes", ([], []))
+    if "sell_investments" in cost:
+        tradeoffs.append("Reduces the investments held for future growth.")
     return dict(
         id="rec-" + hashlib.sha1(json.dumps([ch.model_dump() for ch in c.changes], sort_keys=True, default=str).encode()).hexdigest()[:10],
-        strategy=strat,
+        strategy=strat, primary_lever=c.kinds[0], respects=respects, asks=asks,
         strategy_title=STRATEGIES[strat]["title"],
         strategy_blurb=STRATEGIES[strat]["blurb"],
         concession="goal" in cost,
@@ -427,8 +547,9 @@ def _explain(plan: Plan, c: Candidate, ev0: dict, strat: str) -> dict:
     )
 
 
-def recommend(plan: Plan, n: int = 3) -> dict:
-    cands, ev0 = search(plan)
+def recommend(plan: Plan, n: int = 3, preferences: dict | None = None, *, comparison: bool = False) -> dict:
+    cands, ev0 = search(plan, max_pairs_per_family=2 if comparison else 5, preferences=preferences)
+    safety = "safety" in (preferences or {}).get("priority", {}).values()
     hard0 = [i for i in ev0["issues"] if i["severity"] == "hard"]
     soft0 = [i for i in ev0["issues"] if i["severity"] == "soft"]
     if not hard0 and not soft0:
@@ -437,8 +558,8 @@ def recommend(plan: Plan, n: int = 3) -> dict:
         # Only soft issues: look for options that remove soft issues without adding hard ones.
         improving = [c for c in cands if _feasible(c) and
                      len([i for i in c.ev["issues"] if i["severity"] == "soft"]) < len(soft0) and not c.extras.get("new_soft")]
-        chosen = _select(improving, n)
-        if n > 0 and not any("goal" in c.cost for _, c in chosen):
+        chosen = _select(improving, n, comparison, safety)
+        if not comparison and n > 0 and not any("goal" in c.cost for _, c in chosen):
             concessions = [c for c in improving if c.kinds == ("goal",)]
             if concessions:
                 concession = min(concessions, key=_total_cost)
@@ -447,7 +568,7 @@ def recommend(plan: Plan, n: int = 3) -> dict:
                 else:
                     chosen.append(("speed", concession))
     else:
-        chosen = _select(cands, n)
+        chosen = _select(cands, n, comparison, safety)
     recs = [_explain(plan, c, ev0, s) for s, c in chosen]
     out = dict(status=ev0["status"], evaluated=len(cands), recommendations=recs, message=None)
     if not recs:

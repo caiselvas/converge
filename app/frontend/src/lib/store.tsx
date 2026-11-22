@@ -5,7 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { api, ApiError } from "./api";
 import { applyChanges, mergeChanges, upsert } from "./plan";
-import type { Change, Evaluation, Person, Plan, Proposal, RecResponse, SimResponse, Workspace, Stress } from "./types";
+import type { Change, Evaluation, Person, Plan, Proposal, SimResponse, Workspace, Stress } from "./types";
 
 export type Scope = "nina" | "together" | "emil";
 
@@ -39,12 +39,6 @@ interface Toast {
   text: string;
 }
 
-export interface Preview {
-  label: string;
-  changes: Change[]; // applied on top of the draft
-  sim: SimResponse | null;
-}
-
 interface Ctx {
   ws: Workspace | null;
   loadError: string | null;
@@ -67,18 +61,10 @@ interface Ctx {
   sim: SimResponse | null;
   simLoading: boolean;
   simError: string | null;
-  preview: Preview | null;
-  startPreview: (label: string, changes: Change[]) => void;
-  stopPreview: () => void;
-  recs: RecResponse | null;
-  recsLoading: boolean;
-  refreshRecs: () => void;
-  dismissed: string[];
-  dismissRec: (id: string) => void;
   propose: (title: string, kind?: string) => Promise<Proposal | null>;
   decide: (id: string, approve: boolean) => Promise<void>;
   restore: (vid: number) => Promise<void>;
-  reset: () => Promise<void>;
+  reset: (prepared?: boolean) => Promise<void>;
   refresh: () => Promise<void>;
   toasts: Toast[];
   toast: (text: string, kind?: Toast["kind"]) => void;
@@ -134,12 +120,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [drafts, setDrafts] = useState<Record<string, Change[]>>({});
   const [sim, setSim] = useState<SimResponse | null>(null);
   const [simError, setSimError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<Preview | null>(null);
   const setStress = useCallback((next: Stress) => {
     setStressState(next);
-    setPreview(null);
   }, []);
-  const [dismissed, setDismissed] = useState<string[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -182,8 +165,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const setViewer = useCallback((id: string) => {
     setViewerState(id);
     writeLS("converge.viewer", id);
-    setPreview(null);
-    setDismissed([]);
   }, []);
 
 
@@ -195,7 +176,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const updateDraft = useCallback(
     (fn: (d: Change[]) => Change[]) => {
       setDrafts((all) => ({ ...all, [viewer]: fn(all[viewer] ?? []) }));
-      setPreview(null);
     },
     [viewer],
   );
@@ -245,44 +225,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     };
   }, [draftKey, simKey, stressKey, ws]);
   const simLoading = !!ws && simFor !== simKey && simErrFor !== simKey;
-
-  // Recommendations for the current draft whenever it has issues.
-  const [recsState, setRecsState] = useState<{ key: string; data: RecResponse | null }>({ key: "", data: null });
-  const [recsNonce, setRecsNonce] = useState(0);
-  const refreshRecs = useCallback(() => setRecsNonce((n) => n + 1), []);
-  const simFresh = !!sim && simFor === simKey;
-  const needsRecs = simFresh && sim!.evaluation.status !== "on_track";
-  const recsKey = `${simKey}|${recsNonce}`;
-  useEffect(() => {
-    if (!needsRecs) return;
-    const ctrl = new AbortController();
-    api
-      .recommendations(JSON.parse(draftKey), ctrl.signal, JSON.parse(stressKey))
-      .then((r) => setRecsState({ key: recsKey, data: r }))
-      .catch((e) => {
-        if ((e as Error).name !== "AbortError") setRecsState({ key: recsKey, data: null });
-      });
-    return () => ctrl.abort();
-  }, [needsRecs, recsKey, draftKey, stressKey]);
-  const recs: RecResponse | null = !simFresh
-    ? recsState.data
-    : !needsRecs
-      ? { status: "on_track", evaluated: 0, recommendations: [], message: null }
-      : recsState.key === recsKey ? recsState.data : null;
-  const recsLoading = needsRecs && recsState.key !== recsKey;
-
-  const startPreview = useCallback(
-    (label: string, changes: Change[]) => {
-      const all = plan ? mergeChanges(draft, changes, plan) : changes;
-      setPreview({ label, changes, sim: null });
-      api.simulate(all, undefined, stress)
-        .then((s) => setPreview((p) => (p?.changes === changes ? { ...p, sim: s } : p)))
-        .catch(() => setPreview((p) => (p?.changes === changes ? null : p)));
-    },
-    [draft, plan, stress],
-  );
-  const stopPreview = useCallback(() => setPreview(null), []);
-  const dismissRec = useCallback((id: string) => setDismissed((d) => [...d, id]), []);
 
   const name = useCallback((id: string | null | undefined) => ws?.people.find((p) => p.id === id)?.name ?? "Both", [ws]);
   const idx = useCallback((id: string | null | undefined) => ws?.people.findIndex((p) => p.id === id) ?? -1, [ws]);
@@ -337,20 +279,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     [viewer, refresh, toast],
   );
 
-  const reset = useCallback(async () => {
-    await api.reset();
+  const reset = useCallback(async (prepared = false) => {
+    await api.reset(prepared);
     setDrafts({});
     setStressState({});
-    setPreview(null);
-    setDismissed([]);
     await refresh();
-    toast("Demo reset to the UBS starting point", "info");
+    toast(prepared ? "Demo loaded with the agreed home purchase" : "Demo reset to the UBS starting point", "info");
   }, [refresh, toast]);
 
   const value: Ctx = {
     ws, loadError, viewer, setViewer, scope, setScope, scopedPerson, stress, setStress, plan, draftPlan, draft,
-    setChange, addChanges, removeChange, discardDraft, sim, simLoading, simError: simErrFor === simKey ? simError : null, preview, startPreview,
-    stopPreview, recs, recsLoading, refreshRecs, dismissed, dismissRec, propose, decide, restore, reset,
+    setChange, addChanges, removeChange, discardDraft, sim, simLoading, simError: simErrFor === simKey ? simError : null,
+    propose, decide, restore, reset,
     refresh, toasts, toast, inboxOpen, setInboxOpen, sourcesOpen, setSourcesOpen, name, idx,
   };
   return <C.Provider value={value}>{children}</C.Provider>;
@@ -362,10 +302,10 @@ export function useStore(): Ctx {
   return c;
 }
 
-/** Evaluation currently displayed: preview > draft > agreed. */
+/** Evaluation for the displayed plan and its agreed baseline. */
 export function useDisplayed() {
-  const { sim, preview } = useStore();
-  const current = preview?.sim?.evaluation ?? sim?.evaluation ?? null;
+  const { sim } = useStore();
+  const current = sim?.evaluation ?? null;
   const base = sim?.base ?? null;
-  return { current, base, isPreview: !!preview?.sim };
+  return { current, base };
 }

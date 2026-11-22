@@ -45,6 +45,7 @@ LEVERS: list[Lever] = [
     Lever("people.{pid}.goals.{gid}.target_date", "{goal} — target date", "month", "person"),
     Lever("people.{pid}.goals.{gid}.target_chf", "{goal} — target", "CHF", "person"),
     Lever("people.{pid}.goals", "Goals", "list", "person", "List of personal savings goals"),
+    Lever("people.{pid}.sell_investments", "Investment sales", "investment_sales", "person"),
     Lever("people.{pid}.career_breaks", "Career breaks", "list", "person", "List of career breaks"),
     Lever("people.{pid}.career_breaks.{bid}.start", "Career break start", "month", "person"),
     Lever("people.{pid}.career_breaks.{bid}.months", "Career break length", "months", "person"),
@@ -58,6 +59,7 @@ LEVERS: list[Lever] = [
     Lever("shared.household.moving_cost", "Moving costs", "CHF", "shared"),
     Lever("shared.split.mode", "Cost-sharing rule", "enum", "shared"),
     Lever("shared.split.custom_share_first", "{first}'s share of household costs", "share", "shared"),
+    Lever("shared.split.break_support_share", "Share of income-based break adjustment", "rate", "shared"),
     Lever("shared.split.adjust_for_breaks", "Partner covers more during a career break", "bool", "shared"),
     Lever("shared.children", "Children and parental leave", "children", "shared"),
     Lever("shared.property.enabled", "Buy a home", "bool", "shared"),
@@ -183,6 +185,8 @@ def describe(plan: Plan, ch: Change) -> DescribedChange:
 
 
 def format_value(unit: str, v: Any) -> str:
+    if unit == "investment_sales" and isinstance(v, list):
+        return ", ".join(f"CHF {sale['amount']:,.0f} in {sale['month']}" for sale in v) or "None"
     if v is None:
         return "—"
     if unit in ("CHF/month", "CHF"):

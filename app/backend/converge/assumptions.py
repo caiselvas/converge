@@ -57,6 +57,8 @@ def registry(plan: Plan) -> list[dict]:
                   "averages of 24 months of synthetic transactions (fixed bills: trailing 12 months)."),
         dict(id="investments", name="Investment portfolios", value=None, unit=None, kind="dataset", source="ubs_data",
              note="Snapshot dated 2025-01-01 (no investment transactions in the ledger); grown at the assumed return from Jan 2027."),
+        dict(id="investment_sales", name="Investment sale proceeds", value=None, unit=None, kind="illustrative", source=None,
+             note="Sale proceeds move from investments to cash at projected value. Taxes and transaction costs are omitted."),
         dict(id="relationship", name="Nina and Emil as a couple", value=None, unit=None, kind="illustrative", source=None,
              note="Two unrelated synthetic profiles linked as a hypothetical couple for the demonstration."),
         dict(id="child_everyday", name="Default everyday child budget", value=CHILD_EVERYDAY_DEFAULT, unit="CHF/month",

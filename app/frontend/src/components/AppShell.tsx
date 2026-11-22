@@ -6,7 +6,7 @@ import * as RTooltip from "@radix-ui/react-tooltip";
 import { AlertTriangle, BookOpen, CheckCircle2, Inbox as InboxIcon, Info, LayoutDashboard, MoreHorizontal, Receipt, RotateCcw, Sparkles, Target, X } from "lucide-react";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { scopedHref, useStore, type Scope } from "@/lib/store";
 import { Avatar, Button, Segmented, clsx } from "./ui";
@@ -66,7 +66,19 @@ function InboxButton() {
 }
 
 function MoreMenu() {
-  const { reset, setSourcesOpen } = useStore();
+  const { reset, setSourcesOpen, setScope, toast } = useStore();
+  const router = useRouter();
+  const path = usePathname();
+
+  async function loadDemo(prepared: boolean) {
+    try {
+      await reset(prepared);
+      if (path === "/") setScope("together");
+      else router.push(scopedHref("/", "together"));
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    }
+  }
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
@@ -83,7 +95,12 @@ function MoreMenu() {
             </button>
           </Popover.Close>
           <Popover.Close asChild>
-            <button onClick={() => reset()} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] hover:bg-page">
+            <button onClick={() => void loadDemo(true)} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] hover:bg-page">
+              <RotateCcw size={15} /> Load demo state
+            </button>
+          </Popover.Close>
+          <Popover.Close asChild>
+            <button onClick={() => void loadDemo(false)} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] hover:bg-page">
               <RotateCcw size={15} /> Reset demo to UBS starting point
             </button>
           </Popover.Close>
@@ -155,7 +172,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { ws, loadError, refresh, inboxOpen, setInboxOpen, sourcesOpen, setSourcesOpen, draft, preview, sim, scope, setScope } = useStore();
+  const { ws, loadError, refresh, inboxOpen, setInboxOpen, sourcesOpen, setSourcesOpen, draft, sim, scope, setScope } = useStore();
   const path = usePathname();
   const [askOpen, setAskOpen] = useState(false);
   return (
@@ -190,7 +207,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
         </div>
 
-        <main className={clsx("mx-auto max-w-[1120px] px-4 sm:px-6", draft.length || preview ? "pb-56 md:pb-36" : "pb-32 md:pb-16")}>
+        <main className={clsx("mx-auto max-w-[1120px] px-4 sm:px-6", draft.length ? "pb-56 md:pb-36" : "pb-32 md:pb-16")}>
           {loadError ? (
             <div className="mx-auto mt-24 max-w-md text-center">
               <AlertTriangle className="mx-auto mb-3 text-warn" />

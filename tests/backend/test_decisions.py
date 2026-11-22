@@ -32,9 +32,9 @@ def step(client, mid, viewer, **body):
     return r.json()
 
 
-def test_catalogue_lists_three_decisions(client):
+def test_catalogue_lists_decisions(client):
     ws = client.get("/api/workspace").json()
-    assert [d["id"] for d in ws["decisions"]] == ["move-in", "buy-home", "have-child"]
+    assert [d["id"] for d in ws["decisions"]] == ["move-in", "buy-home", "have-child", "career-break"]
     assert all(d["status"] == "not_started" for d in ws["decisions"])
     assert client.get("/api/decisions/retire-early?viewer=A").status_code == 404
 
@@ -295,3 +295,70 @@ def test_compiled_plan_is_valid_for_every_module(simple_plan):
         changes, errors = D.compile_changes(m, simple_plan, session)
         assert not errors
         assert evaluate(apply_changes(simple_plan, changes))["checks"]["ok"]
+
+
+def test_career_break_preferences_and_approval(client, simple_plan):
+    simple_plan.people[1].opening_cash = 150_000
+    ws = client.post("/api/reset?prepared=true").json()
+    assert ws["plan"]["shared"]["property"]["enabled"]
+    assert [v["id"] for v in ws["versions"]] == [0, 1]
+    s = step(client, "career-break", "B", answers={
+        "person": "B", "start": "2029-01", "months": 2, "income_kept": 0.5, "break_cost": 1000,
+    }, preferences={"why_break": "Study", "break_date_flex": "fixed", "part_time": "yes"})
+    assert s["ready"] and s["approvers"] == ["A", "B"]
+    assert client.post("/api/decisions/career-break/step",
+                       json={"viewer": "B", "preferences": {"cover_more": "yes"}}).status_code == 422
+    s = step(client, "career-break", "A", preferences={"cover_more": "some"})
+    changes = {c["path"]: c["value"] for c in s["changes"]}
+    assert changes["shared.split.adjust_for_breaks"] and changes["shared.split.break_support_share"] == 0.5
+    assert changes["people.B.career_breaks"][0]["income_pct"] == 50
+    comparison = client.post("/api/decisions/career-break/compare", json={"stress": {"mortgage_rate": 0.03}}).json()
+    options = [option for option in comparison["columns"] if option["safe"]]
+    assert options
+    chosen = client.post("/api/decisions/career-break/propose", json={
+        "author": "B", "option_id": options[0]["id"], "stress": {"mortgage_rate": 0.03},
+    })
+    assert chosen.status_code == 200, chosen.text
+    proposal = chosen.json()
+    assert proposal["approvals"] == {"A": "pending", "B": "approved"}
+    assert not any(c["path"] == "shared.property.mortgage_rate" for c in proposal["changes"])
+    assert client.get("/api/workspace").json()["plan"]["people"][1]["career_breaks"] == []
+    assert client.post(f"/api/proposals/{proposal['id']}/approve", json={"person": "A"}).json()["status"] == "applied"
+
+
+@pytest.mark.parametrize(("text", "module", "question", "value"), [
+    ("Ben takes 12 months off from Jan 2028 with CHF 8k in fees", "career-break", "break_cost", 8000),
+    ("buy a CHF 900k home in Jan 2028", "buy-home", "price", 900_000),
+    ("move in together in March 2028", "move-in", "move_in", "2028-03"),
+    ("have a child in April 2028 with 3 days of Kita", "have-child", "childcare_days", 3),
+])
+def test_ask_decisions_prefill_existing_planner(client, text, module, question, value):
+    result = client.post("/api/assistant/interpret", json={"viewer": "A", "text": text}).json()
+    assert result["decision"] == module
+    s = step(client, module, "A", adjustments=result["changes"])
+    q = next(q for q in s["questions"] if q["id"] == question)
+    assert q["value"] == value and q["source"] == "answer"
+    assert client.get("/api/workspace").json()["versions"][0]["id"] == 0
+
+
+
+def test_choosing_an_alternative_preserves_the_agreed_rate(client, demo_plan, tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "store", Store(path=str(tmp_path / "demo.json"), seed_factory=lambda: demo_plan))
+    workspace = client.post("/api/reset?prepared=true").json()
+    nina, emil = [p["id"] for p in workspace["people"]]
+    step(client, "buy-home", nina, preferences={"date_flex": "fixed"})
+    step(client, "career-break", emil, answers=dict(person=emil, start="2028-01", months=12, income_kept=0, break_cost=8000))
+    step(client, "career-break", nina, preferences={"cover_more": "no"})
+    stress = {"mortgage_rate": 0.04}
+    columns = client.post("/api/decisions/career-break/compare", json={"stress": stress}).json()["columns"]
+    assert not columns[0]["safe"]
+    chosen = next(option for option in columns[1:] if option["safe"])
+    result = client.post("/api/decisions/career-break/propose", json={"author": emil, "option_id": chosen["id"], "stress": stress})
+    assert result.status_code == 200, result.text
+    proposal = result.json()
+    assert proposal["approvals"] == {nina: "pending", emil: "approved"}
+    assert client.get(f"/api/decisions/career-break?viewer={emil}").json()["proposal"]["outdated"] is False
+    assert client.post(f"/api/proposals/{proposal['id']}/approve", json={"person": nina}).json()["status"] == "applied"
+    plan = api.store.plan
+    assert evaluate(plan)["status"] != "conflict"
+    assert plan.shared.property.mortgage_rate == workspace["plan"]["shared"]["property"]["mortgage_rate"]

@@ -1,10 +1,15 @@
 """Replay docs/demo.md against the engine using the two UBS demo profiles."""
 
+from time import perf_counter
+
+from converge import decisions as D
 from converge.engine.changes import apply_changes
+from converge.engine.comparison import compare
 from converge.engine.evaluate import chf, evaluate
 from converge.engine.recommend import recommend
 from converge.models import Change
 from converge.seed import default_plan
+from converge.store import prepared_home
 
 
 def main() -> None:
@@ -16,10 +21,7 @@ def main() -> None:
     nina, emil = initial["people"]
     print(f"Opening cash: Nina {chf(nina['start_cash'])}, Emil {chf(emil['start_cash'])}")
 
-    home = apply_changes(base, [
-        Change(path="shared.household.enabled", value=True),
-        Change(path="shared.property.enabled", value=True),
-    ])
+    home = prepared_home(base)
     bought = evaluate(home)
     affordability = bought["property"]["affordability"]
     assert bought["status"] == "on_track" and affordability["passes"]
@@ -96,6 +98,43 @@ def main() -> None:
     print(f"Child scenario: {chf(birth['net_cost'])} net in {child['birth']}; "
           f"{chf(kita['net_cost'])} net in {child_eval['months'][may]} "
           f"(Kita {chf(kita['childcare'])}, allowance {chf(kita['allowance'])})")
+
+
+    session = D.DecisionSession(module=D.CAREER_BREAK.id)
+    D.apply_answers(D.CAREER_BREAK, home, session, emil_id,
+                    dict(person=emil_id, start="2028-01", months=12, income_kept=0, break_cost=8000),
+                    dict(why_break="Time to retrain", break_date_flex="flexible", part_time="yes"))
+    D.apply_answers(D.CAREER_BREAK, home, session, nina_id, {}, {"cover_more": "no"})
+    changes, errors = D.compile_changes(D.CAREER_BREAK, home, session)
+    assert not errors and home.assumptions.horizon_months == 120
+    your_plan = apply_changes(home, changes)
+    before = your_plan.model_dump()
+    prefs = {**session.preferences, "date_flex": {nina_id: "fixed"}}
+    started = perf_counter()
+    comparison = compare(your_plan, prefs)
+    elapsed = perf_counter() - started
+    your_option, *alternatives = comparison["columns"]
+    assert not your_option["people"][1]["safe"] and not your_option["safe"]
+    safe = [o for o in alternatives if o["safe"]]
+    assert len({o["primary_lever"] for o in safe}) == len(safe) >= 2
+    assert all(c["path"] != "shared.property.purchase" for o in safe for c in o["raw_changes"])
+    assert all(o["robustness"]["mortgage"]["value"] > 0 and o["robustness"]["income"]["value"] > 0 for o in safe)
+    assert all(any("keeps the home purchase month" in note for note in o["respects"]) for o in safe)
+    print(f"Planner (120 months): {len(safe)} safe distinct options, firm home date, "
+          f"{comparison['evaluated']} variants in {elapsed:.2f}s")
+    for option in safe:
+        limits = option["robustness"]
+        print(f"  {option['title']} | {limits['mortgage']['value']:.1%} mortgage, "
+              f"{limits['income']['value']:.1%} income drop")
+    stress = compare(your_plan, prefs, {"mortgage_rate": 0.04})
+    survivors = [o for o in stress["columns"] if o["safe"]]
+    assert 0 < len(survivors) < len(safe)
+    assert your_plan.model_dump() == before and home.shared.property.mortgage_rate == 0.018
+    chosen = apply_changes(your_plan, [Change.model_validate(c) for c in survivors[0]["raw_changes"]])
+    assert chosen.shared.property.mortgage_rate == home.shared.property.mortgage_rate
+    assert evaluate(chosen)["status"] != "conflict"
+    print(f"Planner at 4%: {len(survivors)}/{len(safe)} options still safe; "
+          f"agreed mortgage assumption stays {home.shared.property.mortgage_rate:.1%}")
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from converge import config
 from converge.engine import months as M
 from converge.engine.changes import ChangeError, apply_changes, describe, format_value, lever_catalogue
-from converge.models import Change, Plan
+from converge.models import Change, Child, ParentalLeave, Plan
 
 log = logging.getLogger("converge.ai")
 
@@ -194,8 +194,12 @@ def _interpret_llm(plan: Plan, text: str, viewer: str, provider: config.Provider
             changes.append(_career_break_change(plan, cb.person_id, cb.start, cb.months, cb.income_pct, cb.one_off_cost_chf))
         except KeyError:
             rejected_break.append("Career break: person is outside this plan.")
+    decision = _decision_intent(text, changes)
+    if decision == "have-child" and not any(c.path == "shared.children" for c in changes):
+        changes += _child_intake(plan, text, viewer)
     valid, rejected = _validate_each(plan, changes)
     return dict(
+        decision=decision,
         mode="llm", provider=provider, model=model, summary=data.summary,
         clarification=data.clarification, changes=[c.model_dump() for c in valid],
         described=_describe(plan, valid), rejected=rejected + rejected_break,
@@ -204,9 +208,12 @@ def _interpret_llm(plan: Plan, text: str, viewer: str, provider: config.Provider
 
 def _career_break_change(plan: Plan, pid: str, start: str, months: int, income_pct: float, cost: float) -> Change:
     person = plan.person(pid)
-    existing = [b.model_dump() for b in person.career_breaks]
-    existing.append(dict(id=f"cb{len(existing) + 1}", start=start, months=int(months), income_pct=float(income_pct),
-                         one_off_cost_chf=float(cost), label="Career break"))
+    current = next((b for b in person.career_breaks if not b.id.startswith("cb-child-")), None)
+    entry = dict(id=current.id if current else "planner-break", start=start, months=int(months),
+                 income_pct=float(income_pct), one_off_cost_chf=float(cost), label=current.label if current else "Career break")
+    existing = [entry if b == current else b.model_dump() for b in person.career_breaks]
+    if current is None:
+        existing.append(entry)
     return Change(path=f"people.{pid}.career_breaks", value=existing)
 
 
@@ -264,6 +271,37 @@ def _when(text: str, default_year: int) -> str | None:
     return None
 
 
+def _decision_intent(text: str, changes: list[Change]) -> str | None:
+    paths = {c.path for c in changes}
+    if "shared.children" in paths or re.search(r"\b(?:have|having|expecting|plan for|welcome)\s+(?:a|our|another)\s+(?:baby|child)\b",
+                                               text, re.I):
+        return "have-child"
+    if "shared.property.enabled" in paths or re.search(r"\b(?:buy|buying|purchase)\b.*\b(?:home|house|flat|property|apartment)\b",
+                                                       text, re.I):
+        return "buy-home"
+    if any(".career_breaks" in p for p in paths):
+        return "career-break"
+    if "shared.household.enabled" in paths or re.search(r"\bmov(?:e|ing) in together\b", text, re.I):
+        return "move-in"
+    return None
+
+
+def _child_intake(plan: Plan, text: str, viewer: str) -> list[Change]:
+    birth = _when(text.lower(), int(plan.assumptions.start[:4]))
+    if not birth:
+        return []
+    target = min(plan.shared.children, key=lambda c: c.birth, default=None)
+    other = next(p.id for p in plan.people if p.id != viewer)
+    child = (target.model_copy(update={"birth": birth}) if target else
+             Child(id="child-1", label="Child 1", birth=birth, allowance_recipient=viewer,
+                   leave=ParentalLeave(birth_parent=viewer, other_parent=other)))
+    days = re.search(r"(\d(?:\.\d)?)\s+days?[^.]*?\b(?:kita|childcare)\b", text, re.I)
+    if days:
+        child = child.model_copy(update={"childcare_days_per_week": float(days.group(1))})
+    return [Change(path="shared.children", value=[c.model_dump() for c in plan.shared.children if c != target] +
+                   [child.model_dump()])]
+
+
 def _interpret_offline(plan: Plan, text: str, viewer: str) -> dict:
     t = text.lower()
     changes: list[Change] = []
@@ -278,7 +316,7 @@ def _interpret_offline(plan: Plan, text: str, viewer: str) -> dict:
     # Career break
     m = re.search(r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a|an)\s+months?\s+(?:off|break|sabbatical|unpaid|leave)", t) \
         or re.search(r"(?:break|sabbatical|leave|off)\s+(?:of|for)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+months?", t)
-    if m or re.search(r"career break|sabbatical|parental leave|time off", t):
+    if m or re.search(r"career break|sabbatical|time off", t):
         months = 6
         if m:
             g = m.group(1)
@@ -288,7 +326,10 @@ def _interpret_offline(plan: Plan, text: str, viewer: str) -> dict:
         pm = re.search(r"(\d+)\s*%\s*(?:of\s+)?(?:income|salary|part)", t)
         if pm:
             pct = float(pm.group(1))
-        changes.append(_career_break_change(plan, subject, start, months, pct, 0.0))
+        costs = re.search(r"(?:costs?|fees?) (?:of )?(?:chf\s*)?(\d[\d',.]*\s*k?)|"
+                          r"(?:chf\s*)?(\d[\d',.]*\s*k?)\s+(?:in )?(?:costs?|fees?)", t)
+        cost = _num(next(g for g in costs.groups() if g is not None)) if costs else 0.0
+        changes.append(_career_break_change(plan, subject, start, months, pct, cost))
 
     # Home purchase
     if re.search(r"\b(buy|purchase)\w*\b.*\b(house|home|flat|apartment|property)\b", t):
@@ -334,12 +375,15 @@ def _interpret_offline(plan: Plan, text: str, viewer: str) -> dict:
         if w:
             changes.append(Change(path="shared.household.move_in", value=w))
 
+    decision = _decision_intent(text, changes)
+    if decision == "have-child":
+        changes += _child_intake(plan, text, subject)
     valid, rejected = _validate_each(plan, changes)
-    if not valid:
+    if not valid and not decision:
         notes.append("I could not map this to a supported change. Try e.g. “Emil takes 12 months off from Jan 2028” or "
                      "“buy a CHF 1.2M home in Oct 2028”.")
     return dict(
-        mode="offline", model=None,
+        mode="offline", model=None, decision=decision,
         summary="Interpreted with the built-in parser.",
         clarification=notes[0] if notes else None,
         changes=[c.model_dump() for c in valid], described=_describe(plan, valid), rejected=rejected,

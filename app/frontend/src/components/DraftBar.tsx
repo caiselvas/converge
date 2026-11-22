@@ -1,7 +1,7 @@
 "use client";
 
 import * as Popover from "@radix-ui/react-popover";
-import { ArrowRight, Eye, Loader2, Send, X } from "lucide-react";
+import { ArrowRight, Loader2, Send, X } from "lucide-react";
 import { useState } from "react";
 
 import { chf } from "@/lib/format";
@@ -44,13 +44,13 @@ function autoTitle(changes: DescribedChange[]): string {
 }
 
 export function DraftBar() {
-  const { draft, sim, simLoading, discardDraft, removeChange, propose, viewer, name, idx, preview, stopPreview, ws, simError } = useStore();
+  const { draft, sim, simLoading, discardDraft, removeChange, propose, viewer, name, idx, ws, simError } = useStore();
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const described = sim?.changes ?? [];
 
-  if (!draft.length && !preview) return null;
-  const ev = preview?.sim?.evaluation ?? sim?.evaluation;
+  if (!draft.length) return null;
+  const ev = sim?.evaluation;
   const base = sim?.base;
   const approvers = sim?.approvers ?? [];
   const others = approvers.filter((a) => a !== viewer);
@@ -59,15 +59,6 @@ export function DraftBar() {
   return (
     <div className="pointer-events-auto">
       <div>
-        {preview && (
-          <div className="fade-up mb-2 flex items-center justify-between gap-3 rounded-xl bg-brand px-4 py-2 text-[13px] text-white shadow-lg">
-            <span className="flex min-w-0 items-center gap-2">
-              <Eye size={15} className="shrink-0" />
-              <span className="truncate">Previewing: <b>{preview.label}</b> — nothing is saved</span>
-            </span>
-            <button onClick={stopPreview} className="shrink-0 rounded-md bg-white/15 px-2.5 py-1 text-[12.5px] font-medium hover:bg-white/25">End preview</button>
-          </div>
-        )}
         {draft.length > 0 && (
           <div className="fade-up flex flex-col gap-3 rounded-2xl border border-line bg-white px-4 py-3 shadow-[0_8px_30px_rgb(15_23_42/0.12)] lg:flex-row lg:items-center lg:justify-between">
             <div className="flex min-w-0 flex-wrap items-center gap-2">

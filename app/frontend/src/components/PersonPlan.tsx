@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { addMonths, chf, monthLabel, num } from "@/lib/format";
 import { useDisplayed, useStore } from "@/lib/store";
-import type { CareerBreak, Goal, GoalStatus, Person } from "@/lib/types";
+import type { Goal, GoalStatus, Person } from "@/lib/types";
 import { EditRow, PlanSection } from "./EditRow";
 import { Avatar, Button, MonthField, NumberField, clsx } from "./ui";
 
@@ -59,49 +59,6 @@ function GoalEditor({ goal, onSave, onRemove, onCancel }: { goal: Goal; onSave: 
       </div>
     </div>
   );
-}
-
-function BreakEditor({ value, onSave, onRemove, onCancel, min, submitLabel = "Save" }: { value: CareerBreak; onSave: (b: CareerBreak) => void; onRemove?: () => void; onCancel?: () => void; min: string; submitLabel?: string }) {
-  const [b, setB] = useState(value);
-  return (
-    <div className="space-y-3 rounded-xl bg-page p-4">
-      <div className="grid grid-cols-2 gap-3 text-[12px] text-muted">
-        <label>From<div className="mt-1"><MonthField ariaLabel="Break start" value={b.start} min={min} onChange={(v) => setB({ ...b, start: v })} /></div></label>
-        <label>Length<div className="mt-1"><NumberField ariaLabel="Break months" value={b.months} min={1} max={36} step={1} prefix="" suffix="mo" width="100%" onChange={(v) => setB({ ...b, months: v })} /></div></label>
-        <label>Income kept<div className="mt-1"><NumberField ariaLabel="Income kept" value={b.income_pct} min={0} max={100} step={10} prefix="" suffix="%" width="100%" onChange={(v) => setB({ ...b, income_pct: v })} /></div></label>
-        <label>One-off costs<div className="mt-1"><NumberField ariaLabel="Break costs" value={b.one_off_cost_chf} step={1000} width="100%" onChange={(v) => setB({ ...b, one_off_cost_chf: v })} /></div></label>
-      </div>
-      <div className="flex items-center justify-between">
-        {onRemove ? <Button size="sm" variant="ghost" onClick={onRemove}><Trash2 size={14} /> Remove</Button> : <span />}
-        <div className="flex gap-2">
-          {onCancel && <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>}
-          <Button size="sm" variant="primary" onClick={() => onSave(b)}>{submitLabel}</Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function newCareerBreak(person: Person, start: string): CareerBreak {
-  let n = 1;
-  while (person.career_breaks.some((b) => b.id === `cb${n}`)) n++;
-  return { id: `cb${n}`, start: start > "2028-01" ? start : "2028-01", months: 6, income_pct: 0, one_off_cost_chf: 8000, label: "Career break" };
-}
-
-export function CareerBreakForm({ person, existing, onClose }: { person: Person; existing?: CareerBreak; onClose: () => void }) {
-  const { draftPlan, setChange } = useStore();
-  if (!draftPlan) return null;
-  return <BreakEditor
-    key={person.id}
-    value={existing ?? newCareerBreak(person, draftPlan.assumptions.start)}
-    min={draftPlan.assumptions.start}
-    submitLabel={existing ? "Update" : "Add"}
-    onSave={(value) => {
-      const breaks = existing ? person.career_breaks.map((b) => b.id === existing.id ? value : b) : [...person.career_breaks, value];
-      setChange(`people.${person.id}.career_breaks`, breaks);
-      onClose();
-    }}
-  />;
 }
 
 export function PersonExpenses({ person, base }: { person: Person; base: Person }) {
@@ -206,29 +163,13 @@ export function PersonGoalsCard({ person, base, title }: { person: Person; base:
   );
 }
 
-/** Career breaks stay available as a supporting plan item in each partner's own view. */
-export function PersonCareerBreaks({ person, base }: { person: Person; base: Person }) {
-  const { setChange, draftPlan } = useStore();
-  const [adding, setAdding] = useState(false);
-  const start = draftPlan!.assumptions.start;
-  const setBreaks = (bs: CareerBreak[]) => setChange(`people.${person.id}.career_breaks`, bs);
-  return (
-    <PlanSection title="Career breaks" action={!adding && <button aria-label="Add career break" onClick={() => setAdding(true)} className="flex items-center gap-1 text-[13px] font-medium text-accent"><Plus size={14} /> Add</button>}>
-      {person.career_breaks.length === 0 && !adding && <p className="py-3 text-[13px] text-muted">No career breaks planned.</p>}
-      {person.career_breaks.map((b) => (
-        <EditRow key={b.id} label={`${b.label} · ${b.months} months`} sub={`From ${monthLabel(b.start)}${b.income_pct ? `, ${b.income_pct}% income` : ", no income"}`}
-          value={b.one_off_cost_chf ? chf(b.one_off_cost_chf, { compact: true }) : null} changed={JSON.stringify(base.career_breaks) !== JSON.stringify(person.career_breaks)}>
-          <BreakEditor value={b} min={start} onSave={(nb) => setBreaks(person.career_breaks.map((x) => (x.id === b.id ? nb : x)))} onRemove={() => setBreaks(person.career_breaks.filter((x) => x.id !== b.id))} />
-        </EditRow>
-      ))}
-      {adding && (
-        <div className="pt-3">
-          <BreakEditor value={newCareerBreak(person, start)} min={start}
-            onSave={(b) => { setBreaks([...person.career_breaks, b]); setAdding(false); }} onCancel={() => setAdding(false)} />
-        </div>
-      )}
-    </PlanSection>
-  );
+export function PersonCareerBreaks({ person }: { person: Person }) {
+  if (!person.career_breaks.length) return null;
+  return <PlanSection title="Career breaks">{person.career_breaks.map((b) => (
+    <p key={b.id} className="py-2 text-[13px] text-muted">
+      {b.label} · {b.months} months from {monthLabel(b.start)} · {b.income_pct}% income
+    </p>
+  ))}</PlanSection>;
 }
 
 function nextGoalId(goals: Goal[]): string {

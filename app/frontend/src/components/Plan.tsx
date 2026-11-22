@@ -1,15 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { CashChart, ChartLegend } from "./charts/CashChart";
 import { Decisions, StressTag } from "./Decisions";
-import { Recommendations, useRecommendationList } from "./Recommendations";
+import { decisionHref } from "./decisions/registry";
 import { Segmented, Skeleton, clsx } from "./ui";
 import { api, llmProviderLabel } from "@/lib/api";
 import { chf, monthLabel, pct } from "@/lib/format";
-import { mergeChanges } from "@/lib/plan";
 import { scopedHref, scopedIssues, useDisplayed, useStore } from "@/lib/store";
 import type { Change, Evaluation, ExplainResponse, GoalStatus, Issue, Stress } from "@/lib/types";
 
@@ -94,9 +94,8 @@ export function Explanation({ changes, stress }: { changes: Change[]; stress: St
 }
 
 function Why({ issue, others }: { issue: Issue; others: Issue[] }) {
-  const { plan, ws, draft, preview, stress, scopedPerson } = useStore();
+  const { ws, draft: changes, stress, scopedPerson } = useStore();
   const max = Math.max(1, ...issue.drivers.map((d) => d.amount_chf));
-  const changes = plan && preview?.sim ? mergeChanges(draft, preview.changes, plan) : draft;
   return (
     <div className="fade-up mt-5 max-w-2xl rounded-2xl border border-line bg-white p-5">
       {issue.drivers.length > 0 && (
@@ -148,7 +147,7 @@ function CashDeltas({ ev, base, personId, compact }: { ev: Evaluation; base: Eva
 }
 
 export function OutcomeStrip() {
-  const { scope, scopedPerson, draft, preview, simError } = useStore();
+  const { scope, scopedPerson, draft, simError } = useStore();
   const { current, base } = useDisplayed();
   if (!current) return null;
   const personId = scopedPerson?.id;
@@ -160,7 +159,7 @@ export function OutcomeStrip() {
             <StatusDot issues={scopedIssues(current, personId)} />
             <span className="truncate">{headline(current, personId).title}</span>
           </div>
-          {(draft.length > 0 || preview) && base && <CashDeltas ev={current} base={base} personId={personId} compact />}
+          {draft.length > 0 && base && <CashDeltas ev={current} base={base} personId={personId} compact />}
           {simError && <p className="mt-1 truncate text-[12px] text-bad-strong">{simError}</p>}
         </Link>
         <StressTag />
@@ -171,19 +170,42 @@ export function OutcomeStrip() {
 
 function Hero({ ev, base }: { ev: Evaluation; base: Evaluation | null }) {
   const [why, setWhy] = useState(false);
-  const { preview, scopedPerson, draft, ws, viewer, name, setInboxOpen } = useStore();
-  const { list } = useRecommendationList();
+  const { scopedPerson, draft, ws, viewer, name, setInboxOpen, scope, toast, refresh } = useStore();
+  const router = useRouter();
+  const [opening, setOpening] = useState(false);
   const personId = scopedPerson?.id;
   const issues = scopedIssues(ev, personId);
   const h = headline(ev, personId);
   const hasConflict = issues.some((i) => i.severity === "hard");
+  const breakChange = draft.some((c) => c.path.includes(".career_breaks"));
+  const homeChange = draft.some((c) => c.path.startsWith("shared.property."));
+  const childChange = draft.some((c) => c.path === "shared.children");
+  const affected = issues.find((i) => i.severity === "hard" && i.person)?.person;
+  const breakEvent = ev.events.find((e) => e.kind === "career_break" && (!affected || e.person === affected));
+  const planner = breakChange ? "career-break" : childChange ? "have-child" : homeChange ? "buy-home"
+    : breakEvent ? "career-break" : ev.children.length ? "have-child" : ev.property ? "buy-home" : "move-in";
+
+  async function openComparison() {
+    setOpening(true);
+    try {
+      if (draft.length) {
+        await api.decisionStep(planner, { viewer, adjustments: draft });
+        await refresh();
+      }
+      router.push(decisionHref(planner, scope, { review: true, subject: !draft.length && planner === "career-break" ? breakEvent?.person ?? undefined : undefined }));
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setOpening(false);
+    }
+  }
   const pending = ws?.proposals.find((p) => p.status === "pending" && p.approvals[viewer] === "pending");
   const goalRisks = missedGoals(ev, personId).filter(({ personId: id, goal }) => h.issue?.id !== `goal:${id}:${goal.id}`);
   return (
     <section className="pt-5 pb-1 sm:pt-7">
       <div className="flex flex-wrap items-center gap-2 text-[13px] text-muted">
         <StatusDot issues={issues} />
-        {preview ? <span className="font-medium text-brand">Preview</span> : draft.length ? <span className="font-medium text-accent">Your draft</span> : <span>Agreed plan</span>}
+        {draft.length ? <span className="font-medium text-accent">Your draft</span> : <span>Agreed plan</span>}
         <span>· {monthLabel(ev.months[0])} – {monthLabel(ev.months[ev.months.length - 1])}</span>
         <StressTag />
       </div>
@@ -192,14 +214,8 @@ function Hero({ ev, base }: { ev: Evaluation; base: Evaluation | null }) {
         {h.sub}{" "}
         {h.issue && <button onClick={() => setWhy(!why)} className="font-medium text-accent hover:underline">{why ? "Hide" : "Why?"}</button>}
       </p>
-      {hasConflict && list.length > 0 && <a href="#fixes" className="mt-1 inline-block text-[13px] font-semibold text-accent hover:underline"
-        onClick={(event) => {
-          const target = document.getElementById("fixes");
-          if (!target) return;
-          event.preventDefault();
-          target.focus({ preventScroll: true });
-          target.scrollIntoView({ block: "start" });
-        }}>See {list.length} {list.length === 1 ? "way" : "ways"} to fix this</a>}
+      {hasConflict && <button type="button" disabled={opening} onClick={openComparison}
+        className="mt-1 inline-block min-h-10 text-[13px] font-semibold text-accent hover:underline disabled:opacity-50">Compare ways to fix this</button>}
       {goalRisks.map(({ personId: id, goal }) => <p key={`${id}:${goal.id}`} className="mt-1 text-[13px] text-warn">{goalHeadline(goal)}</p>)}
       {pending && <button type="button" onClick={() => setInboxOpen(true)} className="mt-2 block max-w-full truncate text-left text-[13px] text-muted hover:text-ink">
         {name(pending.author)} proposed {pending.title} <span className="font-medium text-accent">· Review</span>
@@ -211,7 +227,7 @@ function Hero({ ev, base }: { ev: Evaluation; base: Evaluation | null }) {
 }
 
 export function PlanView() {
-  const { draft, preview, scopedPerson, idx, simError, stress } = useStore();
+  const { draft, scopedPerson, idx, simError, stress } = useStore();
   const { current, base } = useDisplayed();
   const [metric, setMetric] = useState<"cash" | "net_worth">("cash");
   if (!current) return (
@@ -221,7 +237,7 @@ export function PlanView() {
     </div>
   );
   const only = scopedPerson ? idx(scopedPerson.id) : undefined;
-  const editing = draft.length > 0 || !!preview;
+  const editing = draft.length > 0;
   const cmp = editing || Object.keys(stress).length ? base : null;
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -230,7 +246,6 @@ export function PlanView() {
         {simError && <p role="alert" className="mt-2 text-[13px] text-bad-strong">{simError}</p>}
         <div className="mt-3"><Decisions /></div>
       </div>
-      <Recommendations />
       <section aria-label="Projection" className="rounded-2xl border border-line bg-white px-2 pt-4 pb-4 sm:px-5 sm:pt-5">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-3 px-3 sm:px-1">
           <ChartLegend names={current.people.map((p) => p.name)} only={only} showBase={!!cmp} showFloor={metric === "cash"}

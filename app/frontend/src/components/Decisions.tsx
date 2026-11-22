@@ -7,14 +7,14 @@ import { useState } from "react";
 
 import { chf, monthLabel, pct } from "@/lib/format";
 import { useStore } from "@/lib/store";
-import type { Person, Stress } from "@/lib/types";
+import type { Stress } from "@/lib/types";
 import { decisionHref } from "./decisions/registry";
-import { CareerBreakForm } from "./PersonPlan";
-import { Range, Segmented, clsx } from "./ui";
+import { Range, clsx } from "./ui";
 
 const chip = "inline-flex min-h-10 items-center gap-2 rounded-full border border-line-strong bg-white px-3.5 text-[13.5px] font-medium text-ink shadow-[0_1px_2px_rgb(15_23_42/0.04)] hover:bg-page focus-visible:ring-2 focus-visible:ring-accent/40";
 
 const stressFields = [
+  { key: "income_drop", label: "Income drop", short: "income drop", min: 0, max: 50, step: 1 },
   { key: "mortgage_rate", label: "Mortgage rate", short: "mortgage", min: 0.5, max: 6, step: 0.1 },
   { key: "expense_inflation", label: "Inflation", short: "inflation", min: 0, max: 5, step: 0.1 },
   { key: "investment_return", label: "Investment return", short: "investment return", min: -10, max: 8, step: 0.5 },
@@ -34,29 +34,14 @@ function Pop({ trigger, children }: { trigger: React.ReactNode; children: (close
   );
 }
 
-function RemoveDecision({ label, onClick }: { label: string; onClick: () => void }) {
-  return <button type="button" aria-label={label} onClick={onClick} className="min-h-10 shrink-0 rounded-full px-2.5 text-muted hover:bg-page hover:text-ink"><X size={14} /></button>;
-}
-
-function AddBreak({ people, close }: { people: Person[]; close: () => void }) {
-  const { viewer } = useStore();
-  const [who, setWho] = useState(viewer);
-  const person = people.find((p) => p.id === who) ?? people[0];
-  return (
-    <div className="space-y-3">
-      {people.length > 1 && <Segmented ariaLabel="Who takes the break" value={person.id} onChange={setWho}
-        options={people.map((p) => ({ value: p.id, label: p.name }))} />}
-      <CareerBreakForm person={person} onClose={close} />
-    </div>
-  );
-}
-
-function StressForm() {
+function StressForm({ mortgageRate }: { mortgageRate?: number | null }) {
   const { draftPlan, stress, setStress } = useStore();
   if (!draftPlan) return null;
   const property = draftPlan.shared.property;
+  const rate = mortgageRate === undefined ? (property.enabled ? property.mortgage_rate : null) : mortgageRate;
   const defaults: Required<Stress> = {
-    mortgage_rate: property.mortgage_rate,
+    income_drop: 0,
+    mortgage_rate: rate ?? property.mortgage_rate,
     expense_inflation: draftPlan.assumptions.expense_inflation,
     investment_return: draftPlan.assumptions.investment_return,
   };
@@ -65,7 +50,7 @@ function StressForm() {
       <div className="text-[15px] font-semibold">Stress test</div>
       {stressFields.map(({ key, label, min, max, step }) => {
         const value = stress[key] ?? defaults[key];
-        const disabled = key === "mortgage_rate" && !property.enabled;
+        const disabled = key === "mortgage_rate" && rate === null;
         return (
           <div key={key} className={clsx(disabled && "opacity-40")}>
             <div className="flex justify-between text-[13px]"><span className="text-muted">{label}</span><span className="tnum font-semibold">{pct(value, 1)}</span></div>
@@ -82,9 +67,15 @@ function StressForm() {
           </div>
         );
       })}
-      {!property.enabled && <p className="text-[12px] text-muted">Add a home purchase to stress the mortgage rate.</p>}
+      {rate === null && <p className="text-[12px] text-muted">Add a home purchase to stress the mortgage rate.</p>}
     </div>
   );
+}
+
+export function StressButton({ mortgageRate }: { mortgageRate?: number | null }) {
+  return <Pop trigger={<button className={chip}><Gauge size={16} className="text-muted" /> Stress test</button>}>
+    {() => <StressForm mortgageRate={mortgageRate} />}
+  </Pop>;
 }
 
 export function StressTag() {
@@ -100,57 +91,39 @@ export function StressTag() {
 }
 
 export function Decisions() {
-  const { draftPlan, scopedPerson, setChange, scope } = useStore();
+  const { draftPlan, scopedPerson, scope } = useStore();
   if (!draftPlan) return null;
   const property = draftPlan.shared.property;
   const household = draftPlan.shared.household;
   const children = draftPlan.shared.children;
   const firstChild = children.length ? [...children].sort((a, b) => a.birth.localeCompare(b.birth))[0] : null;
   const people = scopedPerson ? [scopedPerson] : draftPlan.people;
-  const withoutBreak = people.filter((p) => !p.career_breaks.length);
+  const withoutBreak = people.filter((p) => !p.career_breaks.some((b) => !b.id.startsWith("cb-child-")));
   // Life decisions are planned in Goals. These chips only summarise and navigate; they never change the plan.
   const living = household.enabled && !property.enabled;
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {!scopedPerson && !property.enabled && <span className={clsx("inline-flex items-center rounded-full", living && "border border-line-strong bg-white")}>
-        <Link href={decisionHref("move-in", scope)} className={clsx(chip, living && "border-0 shadow-none")}>
-          <KeyRound size={16} className="text-muted" />
-          {living ? `Living together · from ${monthLabel(household.move_in, true)}` : "+ Move in together"}
+      {!scopedPerson && !property.enabled && <Link href={decisionHref("move-in", scope)} className={chip}>
+        <KeyRound size={16} className="text-muted" />
+        {living ? `Living together · from ${monthLabel(household.move_in, true)}` : "+ Move in together"}
+      </Link>}
+      {!scopedPerson && <Link href={decisionHref("buy-home", scope)} className={chip}>
+        <Home size={16} className="text-muted" />
+        {property.enabled ? `Home · ${chf(property.price, { compact: true })} · ${monthLabel(property.purchase, true)}` : "+ Buy a home"}
+      </Link>}
+      {!scopedPerson && <Link href={decisionHref("have-child", scope)} className={chip}>
+        <Baby size={16} className="text-muted" />
+        {firstChild ? `${children.length === 1 ? "Child" : `${children.length} children`} · ${monthLabel(firstChild.birth)}` : "+ Have a child"}
+      </Link>}
+      {people.flatMap((person) => person.career_breaks.filter((entry) => !entry.id.startsWith("cb-child-")).slice(0, 1).map((entry) => (
+        <Link key={person.id} href={decisionHref("career-break", scope, { subject: person.id })} className={chip}>
+          <Briefcase size={16} className="text-muted" />{person.name}: {entry.months}-month break from {monthLabel(entry.start, true)}
         </Link>
-        {living && <RemoveDecision label="Stop living together in this draft" onClick={() => setChange("shared.household.enabled", false)} />}
-      </span>}
-      {!scopedPerson && <span className={clsx("inline-flex items-center rounded-full", property.enabled && "border border-line-strong bg-white")}>
-        <Link href={decisionHref("buy-home", scope)} className={clsx(chip, property.enabled && "border-0 shadow-none")}>
-          <Home size={16} className="text-muted" />
-          {property.enabled ? `Home · ${chf(property.price, { compact: true })} · ${monthLabel(property.purchase, true)}` : "+ Buy a home"}
-        </Link>
-        {property.enabled && <RemoveDecision label="Remove home purchase from this draft" onClick={() => setChange("shared.property.enabled", false)} />}
-      </span>}
-      {!scopedPerson && <span className={clsx("inline-flex items-center rounded-full", firstChild && "border border-line-strong bg-white")}>
-        <Link href={decisionHref("have-child", scope)} className={clsx(chip, firstChild && "border-0 shadow-none")}>
-          <Baby size={16} className="text-muted" />
-          {firstChild ? `${children.length === 1 ? "Child" : `${children.length} children`} · ${monthLabel(firstChild.birth)}` : "+ Have a child"}
-        </Link>
-        {firstChild && children.length === 1 &&
-          <RemoveDecision label="Remove child from this draft" onClick={() => setChange("shared.children", [])} />}
-      </span>}
-      {people.flatMap((person) => person.career_breaks.map((entry) => (
-        <span key={`${person.id}:${entry.id}`} className="inline-flex max-w-full items-center rounded-full border border-line-strong bg-white">
-          <Pop trigger={<button className={clsx(chip, "min-w-0 border-0 text-left shadow-none")}><Briefcase size={16} className="shrink-0 text-muted" />
-            {person.name}: {entry.months}-month break from {monthLabel(entry.start, true)}
-          </button>}>
-            {(close) => <CareerBreakForm person={person} existing={entry} onClose={close} />}
-          </Pop>
-          <RemoveDecision label={`Remove ${person.name}’s career break`}
-            onClick={() => setChange(`people.${person.id}.career_breaks`, person.career_breaks.filter((b) => b.id !== entry.id))} />
-        </span>
       )))}
-      {withoutBreak.length > 0 && <Pop trigger={<button className={chip}><Briefcase size={16} className="text-muted" /> + Career break</button>}>
-        {(close) => <AddBreak people={withoutBreak} close={close} />}
-      </Pop>}
-      <Pop trigger={<button className={chip}><Gauge size={16} className="text-muted" /> Stress test</button>}>
-        {() => <StressForm />}
-      </Pop>
+      {withoutBreak.length > 0 && <Link className={chip} href={decisionHref("career-break", scope, { subject: scopedPerson?.id })}>
+        <Briefcase size={16} className="text-muted" /> + Career break
+      </Link>}
+      <StressButton />
     </div>
   );
 }

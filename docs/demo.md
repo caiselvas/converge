@@ -1,42 +1,29 @@
-# Demo script (about 3 minutes)
+# Converge demo · Emil’s career break
 
-Start both servers (`make dev`) and open <http://localhost:3000>. Reset first: `···` → *Reset demo to UBS starting point*. All numbers come from the engine. The ones quoted here are what it produced at the time of writing.
+## Prepare
 
-To replay the numbers without starting either server, run `PYTHONPATH=app/backend app/backend/.venv/bin/python scripts/demo_check.py` from the repository root.
+Open **··· → Load demo state**. This resets the workspace to the UBS starting point with the couple’s agreed CHF 1’400’000 home in April 2028. Its indicative affordability ratio is 31.7% of their usual net income. Under **Viewing as Nina**, open the home planner’s **Brief** and set **Purchase date** to **The date is essential to me**.
 
-Use **Overview** for the verdict, decision summaries, recommendations and chart. **Goals** is where life decisions are planned and personal goals kept; **Expenses** holds budgets. Both keep a live verdict at the top. The scope control follows you across all three pages.
+## Plan the break
 
-**1. Two independent futures (30 s)** — viewing as Nina
+Switch **Viewing as** to Emil and open **+ Career break** on Overview. Choose Emil, January 2028, 12 months, 0% pay kept and CHF 8’000 in one-off costs. You can also open Ask and enter “Emil takes 12 months off from Jan 2028 with CHF 8k in fees” to fill those fields in the same planner.
 
-- The headline reads "Your plan works for both of you." The chart shows Nina's opening cash (CHF 286’652) and Emil's (CHF 157’059) on separate lines, loaded from UBS profiles P00918 and P00809.
-- Select **Nina** and open **Expenses**. Lower *Restaurants* and watch the lowest-cash chip update. Click **Discard** to undo. *About this data* shows reconciliation to CHF 0.00. Return to **Overview** in **Together** scope.
+Say the break gives Emil time to retrain, that he could start later, and that he could work part-time. In the brief, switch to Nina and choose **Keep our usual split** for household support.
 
-**2. Plan a life decision together (45 s)**
+## Compare
 
-- Open **Goals**. The top section, *Plan a life decision*, offers Move in together, Buy a home and Have a child. Choose **Buy a home**. Nothing changes in the plan yet.
-- Answer the first question in your own words, e.g. *"around 1.4 million"* (read by Claude when a key is configured, otherwise by the built-in parser, labelled as such). Accept the suggested April 2028 purchase, 25% deposit and 50/50 deposit split. Choose to rent together first, from April 2027 at CHF 3,400 a month, and share costs in proportion to income. These are the values the later steps assume. Answer Nina's three personal questions. The decision brief on the right fills in as you go and lists that Emil has not shared his view yet.
-- **See the consequences** simulates the brief on top of the agreed plan: both partners stay above their buffers, imputed housing costs are 31.7% of combined usual net income, and the chart shows the deposit drop against the agreed plan (dashed).
-- **Propose to Emil** → switch the viewer to **Emil**. Emil's planner asks only his own three preferences (everything else is already answered) and the brief shows where they see things differently. **Proposals** → **Approve**. Back on Overview the *Home* chip summarises the purchase and links to the planner.
+Open **Compare options**. In **Your plan**, Emil’s cash falls below his buffer in June 2028 and is CHF 22’040 short in December. Nina has CHF 188’162 above her buffer at her cash low. The home date stays fixed across the alternatives. The engine verifies three safe options in the 120-month projection.
 
-**3. Introduce a conflict (30 s)** — viewing as Emil
+| Option | Mortgage rate it holds up to | Income drop it holds up to |
+| --- | ---: | ---: |
+| Emil keeps 20% of usual pay by working part-time | 2.2% | 1.0% |
+| Nina funds 60% of the deposit and owns 60% | 7.9% | 4.9% |
+| Emil starts in January 2029 | 8.1% | 4.9% |
 
-- **+ Career break** → Emil, January 2028, 12 months, 0% income, CHF 8’000 costs → **Add**.
-- Emil first breaches his buffer in June 2028. The headline shows his lowest point in December 2028, when he is CHF 22’040 short. Click **Why?** to see the deposit, lost income and break costs. Nina still has CHF 188’162 above her buffer at her tightest point.
+Show the comparison in **Together** for household net worth or in **Emil** scope for his cash and safety buffer. On a phone, swipe the options across.
 
-**4. Find alternatives (45 s)**
+## Stress, choose and approve
 
-- The engine evaluates 895 candidates and shows three verified options. Nina can fund and own 60%, Emil can keep 20% of his income by working part-time during the break, or they can lower the deposit to 23% and move the break to January 2029.
-- On **Stay on schedule**, click **Preview** to try the part-time break. Click **Why?** on the card to see the trade-offs, then **Accept** to add it to the draft.
+Set the mortgage rate to **4%** in the comparison’s **Stress test**. Two of the three alternatives still pass. The 20% part-time option falls below Emil’s buffer. Choose the January 2029 break or the ownership option that still passes. Switch to the other partner and **Approve** it from **Proposals**. Clear the stress overlay to see the agreed plan at its original **1.8%** mortgage assumption.
 
-**5. Save Emil's revised break (20 s)**
-
-- Click **Save to my plan** as Emil. The headline returns to "Your plan works for both of you", with Emil's tightest moment at CHF 1’512 above his buffer.
-
-**6. Stress test (25 s)** — viewing as Nina
-
-- Switch to **Nina**, then open **Stress test** and raise the mortgage rate from **1.8% to 4%**. Emil first breaches his buffer in October 2028 and is CHF 6’171 short at his lowest point in December. Three new verified fixes appear. The **Stress** tag shows the temporary rate and clears it when reset.
-- Optional: type *"What if the mortgage rate rises to 3.5%?"* into **Ask**. It turns into a structured, validated change (Claude when a key is configured, otherwise the built-in parser).
-- Close with **Assumptions & sources** in the footer: every number is UBS data, a cited source or a labelled assumption.
-
-
-**Optional goal scenario** — after saving Emil’s revised break, use **Goals** in Emil’s scope to set *Career transition* to CHF 220’000 in December 2030, measured on cash plus investments. The home alone can fund it. With the part-time break it is CHF 46’451 short at the deadline and slips to July 2031. The recommendation cards include an explicit concession to move the target.
+Run `PYTHONPATH=app/backend app/backend/.venv/bin/python scripts/demo_check.py` to replay the comparison and the existing engine checks.

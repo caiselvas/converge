@@ -71,6 +71,11 @@ class CareerBreak(Model):
     label: str = "Career break"
 
 
+class InvestmentSale(Model):
+    month: Month
+    amount: float = Field(gt=0, allow_inf_nan=False)
+
+
 class Liability(Model):
     id: str
     kind: str
@@ -99,6 +104,7 @@ class Person(Model):
     emergency_floor: float = Field(ge=0, description="Hard constraint: cash must never fall below this")
     goals: list[Goal] = []
     career_breaks: list[CareerBreak] = []
+    sell_investments: list[InvestmentSale] = Field(default_factory=list, max_length=120)
 
     @model_validator(mode="after")
     def _no_overlapping_breaks(self) -> "Person":
@@ -132,6 +138,7 @@ class Split(Model):
 
     mode: Literal["equal", "income", "custom"] = "income"
     custom_share_first: float = Field(0.5, ge=0, le=1, description="Share paid by the first partner (custom mode)")
+    break_support_share: float = Field(1.0, ge=0, le=1)
     adjust_for_breaks: bool = Field(
         False, description="During a partner's career break, contributions follow actual income"
     )
@@ -179,7 +186,7 @@ class Shared(Model):
 
 class Assumptions(Model):
     start: Month = "2027-01"
-    horizon_months: int = Field(72, ge=12, le=120)
+    horizon_months: int = Field(120, ge=12, le=120)
     tax_rate: float = Field(0.0, ge=0, le=0.6, description="Optional extra deduction as a share of net income")
     expense_inflation: float = Field(0.008, ge=-0.05, le=0.2)
     income_growth: float = Field(0.008, ge=-0.1, le=0.2)

@@ -1,15 +1,18 @@
 "use client";
 
 import { CornerDownLeft, Loader2, Sparkles, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api, llmProviderLabel } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import type { InterpretResponse } from "@/lib/types";
 import { ChangeRow } from "./DraftBar";
+import { decisionHref } from "./decisions/registry";
 import { Button } from "./ui";
 
 export function AskPanel({ open, setOpen }: { open: boolean; setOpen: (open: boolean) => void }) {
-  const { viewer, draft, scopedPerson, addChanges, toast } = useStore();
+  const { viewer, draft, scopedPerson, scope, addChanges, toast, refresh } = useStore();
+  const router = useRouter();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<InterpretResponse | null>(null);
@@ -32,7 +35,21 @@ export function AskPanel({ open, setOpen }: { open: boolean; setOpen: (open: boo
     if (!text.trim() || busy) return;
     setBusy(true);
     try {
-      setResult(await api.interpret(text, scopedPerson?.id ?? viewer, draft));
+      const interpreted = await api.interpret(text, scopedPerson?.id ?? viewer, draft);
+      if (interpreted.decision) {
+        if (interpreted.changes.length) {
+          await api.decisionStep(interpreted.decision, { viewer, adjustments: interpreted.changes });
+          await refresh();
+        }
+        if (interpreted.notice) toast(interpreted.notice, "info");
+        setResult(null);
+        setText("");
+        setOpen(false);
+        const targetScope = interpreted.decision === "career-break" ? scope : "together";
+        router.push(decisionHref(interpreted.decision, targetScope));
+      } else {
+        setResult(interpreted);
+      }
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
     } finally {

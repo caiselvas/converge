@@ -76,7 +76,7 @@ def _drivers(res: SimResult, pi: int, upto: int) -> list[dict]:
     return items
 
 
-def evaluate(plan: Plan, res: SimResult | None = None) -> dict:
+def evaluate(plan: Plan, res: SimResult | None = None, *, include_series: bool = True) -> dict:
     res = res or simulate(plan)
     H = len(res.months)
     issues: list[dict] = []
@@ -285,14 +285,14 @@ def evaluate(plan: Plan, res: SimResult | None = None) -> dict:
             mortgage=[round(x, 2) for x in res.mortgage],
             joint_transfers=[round(x, 2) for x in res.joint_in],
             share_first=[round(x, 4) for x in shares],
-        ),
+        ) if include_series else {},
         series={
             p.id: {
                 k: [round(x, 2) for x in getattr(s, k)]
-                for k in ("cash", "investments", "net_worth", "income", "family_allowance", "tax", "spending", "household",
+                for k in ("cash", "investments", "investment_sale", "net_worth", "income", "family_allowance", "tax", "spending", "household",
                           "housing", "amortization", "one_off", "deposit", "net_flow", "property_value", "mortgage")
             }
-            for p, s in zip(plan.people, res.people)
+            for p, s in zip(plan.people, res.people) if include_series
         },
         checks=res.checks,
     )

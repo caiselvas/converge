@@ -15,6 +15,7 @@ from converge.data import profiles as profile_data
 from converge.data.ubs import DataUnavailableError
 from converge.engine import months as M
 from converge.engine.changes import ChangeError, apply_changes, describe, format_value, lever_catalogue, required_approvers
+from converge.engine.comparison import compare, with_stress
 from converge.engine.evaluate import evaluate
 from converge.engine.recommend import recommend
 from converge.models import KITA_INFANT_TARIFF, Change, Child, ParentalLeave, Plan
@@ -40,6 +41,7 @@ class StressIn(BaseModel):
     mortgage_rate: float | None = None
     expense_inflation: float | None = None
     investment_return: float | None = None
+    income_drop: float | None = Field(None, ge=0, le=0.50)
 
 
 class ChangesIn(BaseModel):
@@ -83,12 +85,18 @@ class DecisionStepIn(BaseModel):
     ask_next: bool = False
 
 
+class CompareIn(BaseModel):
+    stress: StressIn | None = None
+
+
 class DecisionProposeIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     author: str
     title: str = Field("", max_length=200)
     remove: bool = False
+    option_id: str | None = None
+    stress: StressIn | None = None
 
 
 class ExplainIn(BaseModel):
@@ -111,13 +119,10 @@ def _apply(plan: Plan, changes: list[Change]) -> Plan:
 def _with_stress(plan: Plan, stress: StressIn | None) -> Plan:
     if stress is None:
         return plan
-    paths = {
-        "mortgage_rate": "shared.property.mortgage_rate",
-        "expense_inflation": "assumptions.expense_inflation",
-        "investment_return": "assumptions.investment_return",
-    }
-    return _apply(plan, [Change(path=paths[key], value=value) for key, value in
-                         stress.model_dump(exclude_none=True).items()])
+    try:
+        return with_stress(plan, stress.model_dump(exclude_none=True))
+    except ChangeError as e:
+        raise HTTPException(422, str(e)) from None
 
 
 def _described(plan: Plan, changes: list[Change]) -> list[dict]:
@@ -238,13 +243,44 @@ def decision_step(mid: str, body: DecisionStepIn):
     return _decision_state(m, body.viewer, turn)
 
 
+def _comparison(m: D.DecisionModule, plan: Plan, session: D.DecisionSession, stress: StressIn | None):
+    changes, errors = D.compile_changes(m, plan, session)
+    if errors:
+        raise HTTPException(422, errors[0])
+    candidate = _apply(plan, changes)
+    home = store.decision_session("buy-home")
+    prefs = {key: value for key, value in home.preferences.items()
+             if candidate.shared.property.enabled and key in ("date_flex", "budget_flex")}
+    values, _ = D.resolve(m, plan, session)
+    prefs.update({q.id: {pid: answer for pid, answer in session.preferences.get(q.id, {}).items()
+                         if D._answers_for(q, values, pid)}
+                  for q in m.questions if q.per_partner and session.preferences.get(q.id)})
+    try:
+        return compare(candidate, prefs, stress.model_dump(exclude_none=True) if stress else None)
+    except ChangeError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+@app.post("/api/decisions/{mid}/compare")
+def decision_compare(mid: str, body: CompareIn):
+    return _comparison(_decision_module(mid), store.plan, store.decision_session(mid), body.stress)
+
+
 @app.post("/api/decisions/{mid}/propose")
 def decision_propose(mid: str, body: DecisionProposeIn):
     m = _decision_module(mid)
     plan = store.plan
     session = store.decision_session(mid)
     if body.remove:
-        changes = [c for c in m.remove(plan) if c.value != D.get_value(plan, c.path)]
+        if m.id == "career-break":
+            values, _ = D.resolve(m, plan, session)
+            pid = values["person"]
+            entry = D._career_entry(plan, pid)
+            raw = [Change(path=f"people.{pid}.career_breaks",
+                          value=[b.model_dump() for b in plan.person(pid).career_breaks if b != entry])]
+        else:
+            raw = m.remove(plan)
+        changes = [c for c in raw if c.value != D.get_value(plan, c.path)]
         title = body.title or f"Remove from plan: {m.title.lower()}"
         if not changes:
             raise HTTPException(422, "This decision is not part of your agreed plan.")
@@ -256,14 +292,30 @@ def decision_propose(mid: str, body: DecisionProposeIn):
         changes, errors = D.compile_changes(m, plan, session, values)
         if errors:
             raise HTTPException(422, errors[0])
+        if body.option_id is not None:
+            comparison = _comparison(m, plan, session, body.stress)
+            option = next((c for c in comparison["columns"] if c["id"] == body.option_id), None)
+            if not option or not option["safe"]:
+                raise HTTPException(422, "Choose an option that is safe under the current comparison.")
+            option_changes = [Change.model_validate(ch) for ch in option["raw_changes"]]
+            if option_changes:
+                from converge.store import diff_plans
+
+                chosen = _apply(_apply(plan, changes), option_changes)
+                changes = diff_plans(plan, chosen)
+                D.absorb(m, plan, session, body.author, changes)
+                title = body.title or option["title"]
+            else:
+                title = body.title or f"{m.title}: {m.headline(plan, values)}"
+        else:
+            title = body.title or f"{m.title}: {m.headline(plan, values)}"
         if not changes:
             raise HTTPException(422, "This already matches your agreed plan.")
-        title = body.title or f"{m.title}: {m.headline(plan, values)}"
     brief = D.state(m, plan, session, body.author)["brief"]
     note = " ".join(f"{p['name']}: {p['summary']}." for p in brief["partners"] if p["summary"])[:1000]
     earlier = _linked_proposal(session)
     try:
-        prop = store.propose(body.author, title, changes, "decision", note)
+        prop = store.propose(body.author, title, changes, "decision", note, both=m.id == "career-break")
         if earlier and earlier["status"] == "pending":
             store.supersede(earlier["id"], "Replaced by a newer version of this decision.")
     except (ChangeError, WorkflowError) as e:
@@ -358,8 +410,8 @@ def restore(vid: int, body: RestoreIn):
 
 
 @app.post("/api/reset")
-def reset():
-    store.reset()
+def reset(prepared: bool = False):
+    store.reset(prepared=prepared)
     return workspace()
 
 

@@ -20,10 +20,10 @@ function StatusChip({ d }: { d: DecisionSummary }) {
 }
 
 function DecisionCard({ d }: { d: DecisionSummary }) {
-  const { scope } = useStore();
+  const { scope, scopedPerson } = useStore();
   const action = d.status === "not_started" ? "Start planning" : d.status === "in_plan" ? "Review or change" : "Continue";
   return (
-    <Link href={decisionHref(d.id, scope)}
+    <Link href={decisionHref(d.id, scope, { subject: scopedPerson?.id })}
       className="group flex min-h-[208px] flex-col rounded-2xl border border-line bg-white p-5 transition-[border-color,box-shadow] hover:border-line-strong hover:shadow-[0_6px_24px_rgb(15_23_42/0.07)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
       <div className="flex items-start justify-between gap-3">
         <span className="grid h-10 w-10 place-items-center rounded-xl bg-page text-brand ring-1 ring-line"><DecisionIcon id={d.id} /></span>
@@ -42,7 +42,7 @@ function DecisionCard({ d }: { d: DecisionSummary }) {
 }
 
 export function LifeDecisions() {
-  const { ws } = useStore();
+  const { ws, scopedPerson } = useStore();
   if (!ws) return null;
   return (
     <section aria-labelledby="life-decisions">
@@ -52,7 +52,7 @@ export function LifeDecisions() {
         and nothing changes until you both agree.
       </p>
       <div className="mt-4 grid gap-3 md:grid-cols-3">
-        {ws.decisions.map((d) => <DecisionCard key={d.id} d={d} />)}
+        {ws.decisions.filter((d) => !scopedPerson || d.id === "career-break").map((d) => <DecisionCard key={d.id} d={d} />)}
       </div>
     </section>
   );

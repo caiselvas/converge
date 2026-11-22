@@ -168,7 +168,7 @@ class Store:
         raise WorkflowError("version not found")
 
     # ------------------------------------------------------------------ commands
-    def propose(self, author: str, title: str, changes: list[Change], kind: str = "manual", note: str = "") -> Proposal:
+    def propose(self, author: str, title: str, changes: list[Change], kind: str = "manual", note: str = "", *, both: bool = False) -> Proposal:
         with self._lock:
             ws = self.load()
             if author not in [p.id for p in ws.plan.people]:
@@ -177,7 +177,7 @@ class Store:
             if not changes:
                 raise WorkflowError("a proposal needs at least one change")
             apply_changes(ws.plan, changes)  # validates; raises ChangeError
-            approvers = required_approvers(ws.plan, changes)
+            approvers = [p.id for p in ws.plan.people] if both else required_approvers(ws.plan, changes)
             prop = Proposal(
                 id=uuid.uuid4().hex[:10],
                 author=author,
@@ -228,9 +228,12 @@ class Store:
             self._save()
             return prop
 
-    def reset(self) -> Workspace:
+    def reset(self, *, prepared: bool = False) -> Workspace:
         with self._lock:
             self._ws = self._seed()
+            if prepared:
+                self._ws.plan = prepared_home(self._ws.plan)
+                self._ws.versions.append(Version(id=1, title="Agreed home purchase", author=None, plan=self._ws.plan))
             self._save()
             return self._ws
 
@@ -282,6 +285,13 @@ class Store:
         prop.status = "applied"
         prop.version_id = vid
         prop.decided_at = _now()
+
+
+def prepared_home(plan: Plan) -> Plan:
+    return apply_changes(plan, [
+        Change(path="shared.household.enabled", value=True),
+        Change(path="shared.property.enabled", value=True),
+    ])
 
 
 def diff_plans(a: Plan, b: Plan) -> list[Change]:

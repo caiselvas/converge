@@ -68,6 +68,7 @@ class PersonSeries:
     cash_open: list[float] = field(default_factory=list)
     cash: list[float] = field(default_factory=list)
     investments: list[float] = field(default_factory=list)
+    investment_sale: list[float] = field(default_factory=list)
     property_value: list[float] = field(default_factory=list)
     mortgage: list[float] = field(default_factory=list)
     loans: list[float] = field(default_factory=list)
@@ -192,12 +193,17 @@ def simulate(plan: Plan) -> SimResult:
         for b in p.career_breaks:
             bi = M.index(b.start, start)
             breaks.append((bi, bi + b.months, b.income_pct / 100.0, b.one_off_cost_chf, b.label))
+        sales: dict[int, float] = {}
+        for sale in p.sell_investments:
+            t = M.index(sale.month, start)
+            sales[t] = sales.get(t, 0.0) + sale.amount
         comp.append(
             dict(
                 personal_budget=personal_budget,
                 own_home_budget=own_home_budget,
                 hh_keys=hh_keys,
                 breaks=breaks,
+                sales=sales,
                 bonus=(p.bonus_observed_annual / 12.0) if p.include_bonus else 0.0,
                 loans=[[l.principal_chf, l.annual_rate, l.monthly_payment_chf] for l in p.liabilities],
             )
@@ -257,7 +263,7 @@ def simulate(plan: Plan) -> SimResult:
             # While a partner is on a career break, contributions follow actual income.
             tot = actual[0] + actual[1]
             if tot > 0:
-                s1 = actual[0] / tot
+                s1 += plan.shared.split.break_support_share * (actual[0] / tot - s1)
         shares = [s1, 1.0 - s1]
 
         # --- shared household costs (via joint account)
@@ -337,12 +343,15 @@ def simulate(plan: Plan) -> SimResult:
             one_off = break_one_off[i] + own[i] * fees_total
             deposit = own[i] * deposit_total
             interest_income = max(cash[i], 0.0) * a.cash_interest / 12
+            inv[i] *= inv_growth
+            sale = min(inv[i], c["sales"].get(t, 0.0))
+            inv[i] -= sale
             net = (
                 income - tax - spending - household - housing - amortization - loan_payment - one_off - deposit
-                + interest_income
+                + interest_income + sale
             )
             cash[i] += net
-            inv[i] *= inv_growth
+            s.investment_sale.append(sale)
             if purchase_now and own[i] > 0:
                 s.one_off_items.append((t, "Home deposit", deposit))
                 if fees_total:
@@ -409,10 +418,13 @@ def verify(res: SimResult) -> dict:
     cash_err = 0.0
     flow_err = 0.0
     nw_err = 0.0
-    for s in res.people:
+    inv_err = 0.0
+    growth = (1 + res.plan.assumptions.investment_return) ** (1 / 12)
+    for s, person in zip(res.people, res.plan.people):
         prev = s.cash_open[0]
+        balance = person.investments
         for t in range(len(res.months)):
-            inflow = s.income[t] + s.interest_income[t]
+            inflow = s.income[t] + s.interest_income[t] + s.investment_sale[t]
             outflow = (
                 s.tax[t] + s.spending[t] + s.household[t] + s.housing[t] + s.amortization[t]
                 + s.loan_payment[t] + s.one_off[t] + s.deposit[t]
@@ -422,6 +434,8 @@ def verify(res: SimResult) -> dict:
             nw = s.cash[t] + s.investments[t] + s.property_value[t] - s.mortgage[t] - s.loans[t]
             nw_err = max(nw_err, abs(nw - s.net_worth[t]))
             prev = s.cash[t]
+            inv_err = max(inv_err, abs(balance * growth - s.investment_sale[t] - s.investments[t]))
+            balance = s.investments[t]
     transfer_err = max((abs(x) for x in res.joint_balance), default=0.0)
     transfer_err = max(transfer_err, max((abs(i - o) for i, o in zip(res.joint_in, res.joint_out)), default=0.0))
     prop_err = 0.0
@@ -433,8 +447,9 @@ def verify(res: SimResult) -> dict:
         cash_identity_max_error=cash_err,
         flow_sum_max_error=flow_err,
         net_worth_identity_max_error=nw_err,
+        investment_identity_max_error=inv_err,
         transfers_cancel_max_error=transfer_err,
         ownership_split_max_error=prop_err,
         mortgage_non_negative=all(m >= -tol for m in res.mortgage),
-        ok=max(cash_err, flow_err, nw_err, transfer_err, prop_err) < tol * 1000,
+        ok=max(cash_err, flow_err, nw_err, inv_err, transfer_err, prop_err) < tol * 1000,
     )

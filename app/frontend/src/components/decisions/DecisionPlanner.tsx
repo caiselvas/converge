@@ -2,11 +2,12 @@
 
 import { ArrowLeft, ArrowRight, Check, CornerDownLeft, Loader2, RotateCcw } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { api, llmProviderLabel } from "@/lib/api";
 import { scopedHref, useStore } from "@/lib/store";
-import type { Change, DecisionQuestion, DecisionState, DecisionStepIn, DecisionTurn } from "@/lib/types";
+import type { DecisionQuestion, DecisionState, DecisionStepIn, DecisionTurn } from "@/lib/types";
 import { Avatar, Button, Disclosure, Skeleton, clsx } from "../ui";
 import { DecisionBrief, type Save } from "./DecisionBrief";
 import { DecisionReview } from "./DecisionReview";
@@ -15,7 +16,7 @@ import { DecisionIcon } from "./registry";
 
 type View = "ask" | "brief" | "review";
 
-const STEPS = ["Your plan", "You two", "Brief", "Consequences"] as const;
+const STEPS = ["Your plan", "You two", "Brief", "Compare"] as const;
 
 function StatusBadge({ state }: { state: DecisionState }) {
   const map = {
@@ -93,7 +94,7 @@ function QuestionCard({ q, prompt, worded, number, total, busy, onAnswer, onSkip
       <h2 id="question" className="mt-2 text-[21px] leading-snug font-semibold tracking-tight text-ink sm:text-[23px]">{prompt}</h2>
       {worded && <p className="mt-1 text-[11.5px] text-subtle">Worded by the assistant · {q.label}</p>}
       {q.help && <p className="mt-2 max-w-xl text-[13.5px] leading-5 text-muted">{q.help}</p>}
-      {q.per_partner && other && <p className="mt-2 text-[12.5px] text-muted">{other.name} answers this separately. Neither of you can answer for the other.</p>}
+      {q.per_partner && other && <p className="mt-2 text-[12.5px] text-muted">Only you can give this answer.</p>}
       <div className="mt-5"><QuestionInput key={q.id} q={q} value={value} onChange={setValue} autoFocus /></div>
       {hint && <p className="mt-2 text-[12px] text-muted">{hint}</p>}
       <div className="mt-5 flex flex-wrap items-center gap-2">
@@ -119,23 +120,29 @@ function QuestionCard({ q, prompt, worded, number, total, busy, onAnswer, onSkip
   );
 }
 
-function Planner({ id, viewer }: { id: string; viewer: string }) {
-  const { ws, scope, toast, refresh, draft, removeChange } = useStore();
+function Planner({ id, viewer, subject, review }: { id: string; viewer: string; subject: string | null; review: boolean }) {
+  const { ws, scope, stress, toast, refresh, draft, removeChange } = useStore();
   const [state, setState] = useState<DecisionState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [view, setView] = useState<View | null>(null);
+  const [view, setView] = useState<View | null>(review ? "review" : null);
   const [skipped, setSkipped] = useState<string[]>([]);
   const [turn, setTurn] = useState<DecisionTurn | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const planKey = `${ws?.versions.length}|${ws?.proposals.map((p) => `${p.id}:${p.status}`).join(",")}`;
   useEffect(() => {
     const ctrl = new AbortController();
     api.decision(id, viewer, ctrl.signal)
-      .then((s) => { setState(s); setLoadError(null); })
+      .then(async (s) => {
+        if (subject && id === "career-break" && s.questions.find((q) => q.id === "person")?.value !== subject) {
+          s = await api.decisionStep(id, { viewer, answers: { person: subject } });
+        } else if (subject && id === "career-break" && s.pending.includes("person")) {
+          s = await api.decisionStep(id, { viewer, answers: { person: subject } });
+        }
+        if (!ctrl.signal.aborted) { setState(s); setLoadError(null); }
+      })
       .catch((e) => { if ((e as Error).name !== "AbortError") setLoadError(e instanceof Error ? e.message : String(e)); });
     return () => ctrl.abort();
-  }, [id, viewer, planKey]);
+  }, [id, viewer, ws, subject]);
 
   async function send(body: Omit<DecisionStepIn, "viewer">): Promise<boolean> {
     setBusy(true);
@@ -169,7 +176,7 @@ function Planner({ id, viewer }: { id: string; viewer: string }) {
 
   const llm = state.llm_available;
   const nextQ = state.questions.find((q) => q.id === state.pending.find((p) => !skipped.includes(p))) ?? null;
-  const shown: View = view === "ask" && !nextQ ? "brief" : view ?? (nextQ ? "ask" : "brief");
+  const shown: View = view === "review" && !state.ready || view === "ask" && !nextQ ? "brief" : view ?? (nextQ ? "ask" : "brief");
   const current = shown === "review" ? 3 : shown === "brief" ? 2 : nextQ?.stage === "intention" ? 0 : 1;
   const prompt = nextQ && state.next?.id === nextQ.id ? state.next.prompt : nextQ?.prompt ?? "";
   const worded = !!nextQ && state.next?.id === nextQ.id && state.next.source === "llm";
@@ -180,13 +187,9 @@ function Planner({ id, viewer }: { id: string; viewer: string }) {
     setTurn(null);
   }
 
-  async function adjust(changes: Change[]) {
-    if (await send({ adjustments: [...state!.adjustments, ...changes] })) toast("Added to your decision brief", "info");
-  }
-
-  async function propose(remove = false) {
+  async function propose(remove = false, option_id?: string) {
     try {
-      const p = await api.decisionPropose(id, viewer, { remove });
+      const p = await api.decisionPropose(id, viewer, { remove, option_id, stress: option_id ? stress : undefined });
       for (const c of p.changes) if (draft.some((d) => d.path === c.path)) removeChange(c.path);
       await refresh();
       if (p.status === "applied") toast("Applied to your plan");
@@ -256,16 +259,15 @@ function Planner({ id, viewer }: { id: string; viewer: string }) {
             </p>
             <div className="flex shrink-0 gap-2">
               {nextQ && <Button variant="ghost" size="sm" onClick={() => setView("ask")}>Continue questions</Button>}
-              <Button variant="primary" size="sm" disabled={!state.ready} onClick={() => setView("review")}>See the consequences <ArrowRight size={14} /></Button>
+              <Button variant="primary" size="sm" disabled={!state.ready} onClick={() => setView("review")}>Compare options <ArrowRight size={14} /></Button>
             </div>
           </div>
         </div>
       )}
 
       {shown === "review" && (
-        <div className="mt-5 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
-          <DecisionReview state={state} onAdjust={adjust} onPropose={() => propose(false)} onRemove={() => propose(true)} onEdit={() => setView("brief")} />
-          {side}
+        <div className="mt-5">
+          <DecisionReview state={state} onPropose={(option) => propose(false, option)} onRemove={() => propose(true)} onEdit={() => setView("brief")} />
         </div>
       )}
     </div>
@@ -274,7 +276,10 @@ function Planner({ id, viewer }: { id: string; viewer: string }) {
 
 export function DecisionPlanner({ id }: { id: string }) {
   const { viewer, ws } = useStore();
+  const params = useSearchParams();
+  const subject = params.get("subject");
+  const review = params.get("review") === "1";
   if (!ws || !viewer) return null;
   // Remount per viewer: each partner sees their own open questions and preferences.
-  return <Planner key={viewer} id={id} viewer={viewer} />;
+  return <Planner key={`${id}:${viewer}:${subject}:${review}`} id={id} viewer={viewer} subject={subject} review={review} />;
 }

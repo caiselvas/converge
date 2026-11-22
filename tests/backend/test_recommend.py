@@ -66,3 +66,36 @@ def test_demo_conflict_has_alternatives(demo_plan):
     assert ev["issues"][0]["person"] == "P00809"
     out = recommend(plan)
     assert len(out["recommendations"]) == 3
+
+
+def test_firm_home_date_excludes_delay_from_every_option(simple_plan):
+    simple_plan.people[1].opening_cash = 65_000
+    plan = _conflict(simple_plan)
+    baseline = recommend(plan, comparison=True)["recommendations"]
+    assert any(c["path"] == "shared.property.purchase" for option in baseline for c in option["raw_changes"])
+    firm = recommend(plan, preferences={"date_flex": {"A": "fixed"}}, comparison=True)["recommendations"]
+    assert firm and all(c["path"] != "shared.property.purchase" for option in firm for c in option["raw_changes"])
+    assert all("For Ana, keeps the home purchase month." in option["respects"] for option in firm)
+
+
+def test_flexible_budget_becomes_less_disruptive_than_delay(simple_plan):
+    simple_plan.people[1].opening_cash = 65_000
+    plan = _conflict(simple_plan)
+    baseline = recommend(plan, comparison=True)["recommendations"]
+    preferred = recommend(plan, preferences={"budget_flex": {"A": "lower"}}, comparison=True)["recommendations"]
+    old_budget = next(o for o in baseline if o["primary_lever"] == "budget")
+    new_budget = next(o for o in preferred if o["primary_lever"] == "budget")
+    assert new_budget["disruption"] == old_budget["disruption"] / 2
+    assert new_budget["disruption"] < next(o for o in preferred if o["primary_lever"] == "delay")["disruption"]
+    assert "For Ana, uses a lower budget as requested." in new_budget["respects"]
+
+
+def test_recommendation_can_sell_investments_before_first_breach(simple_plan):
+    simple_plan.shared.property.price = 900_000
+    simple_plan.people[1].investments = 100_000
+    plan = _conflict(simple_plan)
+    option = next(o for o in recommend(plan, comparison=True)["recommendations"]
+                  if o["primary_lever"] == "sell_investments")
+    ev = evaluate(apply_changes(plan, [Change(**c) for c in option["raw_changes"]]))
+    assert ev["status"] != "conflict" and ev["checks"]["ok"]
+    assert sum(ev["series"]["B"]["investment_sale"]) > 0

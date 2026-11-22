@@ -1,12 +1,12 @@
 # Converge — handoff
 
-Branch `cai`. Last code commit: **`31ec27d`** (single-screen UI redesign). The earlier MVP snapshot is `53f778b`. Shared agent instructions are in `AGENTS.md`; project context is in `.agents/PROJECT.md`.
+Branch `main`. The decision planners build on `b32c31f`. Shared agent instructions are in `AGENTS.md`; project context is in `.agents/PROJECT.md`.
 
 ## Navigation and child
 
 - Overview (`/`), Goals (`/goals`) and Expenses (`/expenses`) share the URL-backed scope, draft, viewer and Ask panel. Goals and Expenses show a live outcome strip; the decision planners do not, because they preview their own result.
-- **Goals** has two sections. *Plan a life decision* opens a guided planner per decision (`/goals/move-in`, `/goals/buy-home`, `/goals/have-child`). *Financial goals* holds each partner's safety buffer and savings goals (career breaks stay in a partner's own scope and on Overview).
-- The planners are the only editors for living together, the home, children and the cost split. Overview chips only summarise and link to them; they no longer add anything to the draft. Together Expenses shows the resulting shared costs read-only, with links back to the planner.
+- **Goals** has two sections. *Plan a life decision* opens a guided planner per decision (`/goals/move-in`, `/goals/buy-home`, `/goals/have-child`, `/goals/career-break`). *Financial goals* holds each partner's safety buffer and savings goals.
+- Plan living together, the home, children, career breaks and the cost split in the planners. Overview links into the planners and sends conflicts to the relevant comparison. Together Expenses shows the resulting shared costs read-only, with links back to the planner.
 - Decision modules live in `app/backend/converge/decisions.py` (questions, prefill, validation, mapping to `Change` objects). Interview answers are stored per decision in `workspace.json` (`decisions`), separate from the agreed plan and from personal drafts, and reach the plan only through a `decision` proposal. See `docs/model.md` §5.
 - Child costs, allowance, parental leave and the **Child born** event come from the engine. The standalone child replay in `scripts/demo_check.py` follows the main demo and uses the assumptions documented in `docs/model.md`.
 
@@ -14,17 +14,9 @@ Branch `cai`. Last code commit: **`31ec27d`** (single-screen UI redesign). The e
 
 Converge is a financial planner for couples: **two personal financial twins and one shared plan**. A plan can be fine for the household and still risky for one partner, so every result is shown per partner and constraints are personal.
 
-The UI was deliberately reduced to **one screen** (`app/frontend/src/components/Plan.tsx`):
+**Overview** (`app/frontend/src/components/Plan.tsx`) shows the verdict, planner links and cash projection.
 
-1. **Verdict headline.** One sentence generated from the engine's issues: "Your plan works for both of you." or "Emil's savings fall below the safety buffer in Jun 2028." A sub-line gives the amount, and **Why?** reveals the drivers (deposit, paused income, fees, interest…). When a draft is active, chips show how each partner's lowest cash changed.
-2. **Decision bar.** Buy a home (opens the shared panel), Career break (popover), Stress test (popover with sliders), and a free-text field. Natural language is a convenience, not the centre of the product.
-3. **One chart.** Cash per partner, with dashed safety buffers, event markers and career-break shading. A draft or preview shows the agreed plan as dashed lines. A Cash/Net worth toggle is available.
-4. **Ways to make it work.** Appears only when the plan has issues: three concise cards showing old → new values, each partner's cushion before/after, home timing, *Why?*, and **Preview / Accept / ✕**.
-5. **Nina · Together · Emil row.** Each card opens a **non-modal side panel** (`PersonSheet.tsx`, `SharedSheet.tsx`). On desktop the page shifts left so the chart stays visible and updates while you edit. Rows reveal their editor on click (`EditRow` in `Sheet.tsx`).
-6. **Draft bar** (bottom). Unsaved changes, status before → after, and Review / Discard / **Save to my plan** or **Propose to {partner}**.
-7. Header: logo, **Proposals** (approval inbox drawer with versions and restore), `···` (reset demo), and a **Viewing as** Nina/Emil switch, which simulates identity — there is no authentication. The footer has the accounting-check badge and **Assumptions & sources**.
-
-Principles applied: no tabs, no explanatory paragraphs on the main view, detail only on demand, and colour reserved for meaning (red = constraint breached).
+The comparison combines the two partners' answers with the deterministic engine. It shows one chart, up to three distinct alternatives and separate safety for each partner. Stress changes only the comparison. Use **Choose this option** to send a proposal and switch **Viewing as** to approve it. The header menu can load the prepared demo home or reset to the original UBS state.
 
 ## 2. Architecture and key files
 
@@ -79,7 +71,7 @@ If `make dev` reports `EADDRINUSE`, an old server is still running. Stop it with
 
 Full detail is in `docs/model.md`. In brief:
 
-- Monthly steps over 72 months. Separate partner cash accounts. Shared costs go through a joint account whose transfers cancel out.
+- Monthly steps over 120 months by default. Separate partner cash accounts. Shared costs go through a joint account whose transfers cancel out.
 - Moving in replaces each partner's rent, utilities and groceries, so housing is never double-counted.
 - Home purchase: the deposit turns cash into equity; fees, interest and maintenance are expenses; amortisation reduces cash and debt.
 - Ownership, deposit and property costs all follow the same share.

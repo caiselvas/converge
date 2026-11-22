@@ -50,9 +50,11 @@ export interface Person {
   emergency_floor: number;
   goals: Goal[];
   career_breaks: CareerBreak[];
+  sell_investments: { month: Month; amount: number }[];
 }
 
 export interface Stress {
+  income_drop?: number;
   mortgage_rate?: number;
   expense_inflation?: number;
   investment_return?: number;
@@ -226,7 +228,7 @@ export interface PlanEvent {
 }
 
 export type SeriesKey =
-  | "cash" | "investments" | "net_worth" | "income" | "family_allowance" | "tax" | "spending" | "household"
+  | "cash" | "investments" | "investment_sale" | "net_worth" | "income" | "family_allowance" | "tax" | "spending" | "household"
   | "housing" | "amortization" | "one_off" | "deposit" | "net_flow" | "property_value" | "mortgage";
 
 export interface Evaluation {
@@ -347,7 +349,7 @@ export interface Workspace {
 
 // ---------------------------------------------------------------- life decisions (converge/decisions.py)
 
-export type DecisionId = "move-in" | "buy-home" | "have-child" | (string & {});
+export type DecisionId = "move-in" | "buy-home" | "have-child" | "career-break" | (string & {});
 export type DecisionStatus = "not_started" | "in_progress" | "proposed" | "in_plan";
 
 export interface DecisionSummary {
@@ -475,6 +477,7 @@ export interface AssumptionRow {
 export type LlmProvider = "anthropic" | "openai";
 
 export interface InterpretResponse {
+  decision?: DecisionId | null;
   mode: "llm" | "offline";
   provider?: LlmProvider;
   model: string | null;
@@ -494,3 +497,34 @@ export interface ExplainResponse {
   grounded: boolean;
   notice?: string;
 }
+
+export interface DecisionComparison {
+  months: string[];
+  evaluated: number;
+  mortgage_rate: number | null;
+  columns: {
+    id: string;
+    title: string;
+    primary_lever: string | null;
+    raw_changes: Change[];
+    safe: boolean;
+    issue: string | null;
+    net_worth: number[];
+    people: {
+      id: string;
+      name: string;
+      safe: boolean;
+      min_cash: number;
+      min_cash_month: string;
+      floor: number;
+      cash: number[];
+      breaches: number[];
+      goals: { name: string; reached_month: string | null; slip_months: number | null }[];
+    }[];
+    home: { month: string; delay_months: number; in_horizon: boolean } | null;
+    robustness: { mortgage: StressLimit | null; income: StressLimit };
+    respects: string[];
+    asks: string[];
+  }[];
+}
+export type StressLimit = { kind: "unsafe" | "cap" | "threshold"; value: number };
