@@ -8,6 +8,10 @@ Branch `cai`. Last code commit: **`31ec27d`** (single-screen UI redesign). The e
 - **Have a child** opens the Together Goals editor. Child changes use the shared `shared.children` lever and require both approvals. Together Expenses shows the engine’s monthly child costs alongside joint contributions.
 - Child costs, allowance, parental leave and the **Child born** event come from the engine. The standalone child replay in `scripts/demo_check.py` follows the main demo and uses the assumptions documented in `docs/model.md`.
 
+## Voice
+
+Ask can launch a voice discovery interview. `app/backend/converge/voice/` owns the SQLite memory, question selection, engine tool dispatcher and provider adapters. Voice defaults to off. Goal and scenario tools stage changes for review in the existing DraftBar. Start with [setup and decisions](VOICE.md), [manual test](VOICE_TEST.md), and [milestone status](VOICE_PROGRESS.md).
+
 ## 1. Product and UX decisions
 
 Converge is a financial planner for couples: **two personal financial twins and one shared plan**. A plan can be fine for the household and still risky for one partner, so every result is shown per partner and constraints are personal.

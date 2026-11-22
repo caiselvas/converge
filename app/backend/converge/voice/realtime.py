@@ -6,7 +6,7 @@ from threading import Lock
 from time import monotonic, time
 
 import httpx
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Response, WebSocket
 
 from converge import config
 from converge.voice.routes import Viewer, memory_db
@@ -85,7 +85,9 @@ def provider_status() -> dict:
     elif provider == "openai_realtime" and not config.OPENAI_API_KEY:
         reason = "OpenAI voice needs an API key on the server."
     elif provider == "local":
-        reason = "Local voice is not configured."
+        from converge.voice.local import missing_dependencies
+
+        reason = missing_dependencies()
     else:
         reason = None
     return dict(provider=provider, enabled=reason is None, reason=reason)
@@ -109,10 +111,22 @@ def router_for(get_plan):
             raise HTTPException(404, "Viewer is outside the demo workspace.") from None
         if not limit.take(monotonic()):
             raise HTTPException(429, "Voice reached its hourly session limit.")
-        secret = mint_client_secret()
+        provider = info["provider"]
+        transport = mint_client_secret() if provider == "openai_realtime" else {}
         ends_at = int(time()) + config.VOICE_MAX_SECONDS
+        session = memory_db().start(person.id, ends_at)
+        if provider == "local":
+            from converge.voice.local import admit
+
+            admit(session, ends_at)
+            transport = {"socket_path": f"/api/voice/local/ws/{session}"}
         response.headers["Cache-Control"] = "no-store"
-        return dict(**secret, provider=info["provider"], session_id=memory_db().start(person.id, ends_at),
-                    ends_at=ends_at, idle_seconds=config.VOICE_IDLE_SECONDS)
+        return dict(**transport, provider=provider, session_id=session, ends_at=ends_at, idle_seconds=config.VOICE_IDLE_SECONDS)
+
+    @router.websocket("/api/voice/local/ws/{session_id}")
+    async def local_socket(socket: WebSocket, session_id: str):
+        from converge.voice.local import serve_socket
+
+        await serve_socket(socket, session_id, get_plan)
 
     return router

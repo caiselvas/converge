@@ -73,6 +73,7 @@ class Memory:
         db = sqlite3.connect(self.path)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
+        db.execute("PRAGMA secure_delete=ON")
         try:
             with db:
                 yield db

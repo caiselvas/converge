@@ -86,11 +86,13 @@ export async function connectRealtime({ session, stream, signal, activity, state
   let queue = Promise.resolve();
   let revision = 0;
   let rounds = 0;
-  const respond = () => send({ type: "response.create" });
+  const respond = (askFirst = false) => send(askFirst
+    ? { type: "response.create", response: { tool_choice: { type: "function", name: "next_question" } } }
+    : { type: "response.create" });
   channel.onopen = () => {
     activity();
     state("listening");
-    respond();
+    respond(true);
   };
   channel.onclose = () => { if (!signal.aborted) error("Voice connection ended."); };
   channel.onmessage = ({ data }) => {
@@ -111,7 +113,7 @@ export async function connectRealtime({ session, stream, signal, activity, state
           activity();
           rounds = 0;
           if (event.transcript?.trim()) await transcript("user", event.transcript);
-          if (turn === revision) respond();
+          if (turn === revision) respond(true);
           break;
         case "conversation.item.input_audio_transcription.failed":
           error("Voice could not transcribe the last turn.");
@@ -129,7 +131,7 @@ export async function connectRealtime({ session, stream, signal, activity, state
           break;
         case "response.done": {
           const response = event.response;
-          if (response?.status === "failed") {
+          if (response?.status === "failed" || response?.status === "incomplete") {
             error("OpenAI could not complete the voice response.");
             break;
           }
@@ -176,4 +178,112 @@ export async function connectRealtime({ session, stream, signal, activity, state
     close();
     throw e;
   }
+}
+
+type LocalEvent = {
+  type: string;
+  state?: VoiceState;
+  speaker?: Speaker;
+  text?: string;
+  grounded?: boolean;
+  memory?: MemoryItem[];
+  draft_changes?: Change[];
+  message?: string;
+};
+
+export async function connectLocal({
+  session, stream, signal, activity, state, transcript, error, onResult, draft,
+}: Transport & { onResult: (result: ToolResult) => void; draft: () => Change[] }) {
+  if (!session.socket_path?.startsWith("/api/voice/local/ws/")) {
+    throw new Error("Voice could not obtain a local connection.");
+  }
+  const url = new URL(session.socket_path, window.location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  const context = new AudioContext({ sampleRate: 16000 });
+  const socket = new WebSocket(url);
+  socket.binaryType = "arraybuffer";
+  signal.addEventListener("abort", () => {
+    socket.close();
+    void context.close();
+  }, { once: true });
+
+  let recording = false;
+  let playback = Promise.resolve();
+  let nextAudio = 0;
+  socket.onmessage = ({ data }) => {
+    if (signal.aborted) return;
+    activity();
+    if (data instanceof ArrayBuffer) {
+      playback = playback.then(async () => {
+        const buffer = await context.decodeAudioData(data);
+        if (signal.aborted) return;
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(context.destination);
+        const time = Math.max(context.currentTime, nextAudio);
+        source.start(time);
+        nextAudio = time + buffer.duration;
+      }).catch(() => { if (!signal.aborted) error("Local voice could not play the reply."); });
+      return;
+    }
+    try {
+      const event: LocalEvent = JSON.parse(data);
+      if (event.type === "state" && event.state) {
+        if (event.state === "listening") {
+          void playback.then(() => {
+            const settle = Math.max(0, (nextAudio - context.currentTime) * 1000);
+            window.setTimeout(() => { if (!signal.aborted) state("listening"); }, settle);
+          });
+        } else state(event.state);
+      }
+      if (event.type === "transcript" && event.speaker && event.text) {
+        void transcript(event.speaker, event.text, event.grounded ?? true);
+      }
+      if (event.memory || event.draft_changes) onResult(event);
+      if (event.type === "error") error(event.message ?? "Local voice could not finish.");
+    } catch {
+      error("Local voice sent an unreadable reply.");
+    }
+  };
+  await new Promise<void>((resolve, reject) => {
+    socket.onopen = () => resolve();
+    socket.onerror = () => {
+      if (socket.readyState !== WebSocket.OPEN) reject(new Error("Could not connect to the local voice server."));
+    };
+    socket.onclose = ({ reason }) => {
+      reject(new Error("Local voice connection ended."));
+      if (!signal.aborted) error(reason || "Local voice connection ended.");
+    };
+  });
+  if (signal.aborted) throw new Error("Local voice connection ended.");
+  if (context.sampleRate !== 16000 || !context.audioWorklet) {
+    throw new Error("This browser cannot capture local voice at 16 kHz.");
+  }
+  await context.resume();
+  await context.audioWorklet.addModule("/voice-pcm.js");
+  const pcm = new AudioWorkletNode(context, "voice-pcm");
+  const silent = context.createGain();
+  silent.gain.value = 0;
+  context.createMediaStreamSource(stream).connect(pcm).connect(silent).connect(context.destination);
+  pcm.port.onmessage = ({ data }) => {
+    if (recording && socket.readyState === WebSocket.OPEN) socket.send(data);
+  };
+
+  let timer: number | undefined;
+  function talk(enabled: boolean) {
+    if (signal.aborted || socket.readyState !== WebSocket.OPEN) return;
+    activity();
+    recording = enabled;
+    pcm.port.postMessage(enabled ? "start" : "end");
+    if (enabled) {
+      socket.send(JSON.stringify({ type: "start", draft: draft() }));
+      timer = window.setTimeout(() => talk(false), 14_500);
+    } else {
+      window.clearTimeout(timer);
+      state("thinking");
+      socket.send(JSON.stringify({ type: "end" }));
+    }
+  }
+  signal.addEventListener("abort", () => window.clearTimeout(timer), { once: true });
+  return talk;
 }

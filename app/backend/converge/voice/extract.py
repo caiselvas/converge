@@ -10,6 +10,8 @@ from pydantic import Field, ValidationError
 from converge import ai, config
 from converge.voice.memory import Item
 
+INTENT = re.compile(r"\b(want|would like|hope|plan|planning|intend|goal|save for|aim)\b", re.I)
+NEGATED = re.compile(r"\b(don't|do not|never|no longer|not planning|not want|not taking)\b", re.I)
 GOALS = {"home": "Home", "sabbatical": "Sabbatical", "education": "Education", "family": "Family"}
 DATE = re.compile(r"\b(20\d\d-(?:0[1-9]|1[0-2]))\b")
 AMOUNT = re.compile(r"(?<!\w)(?:CHF\s*)?(\d[\d’',]*(?:\.\d+)?)\s*([km])?(?:\s*CHF)?(?!\w)", re.I)
@@ -80,7 +82,7 @@ def offline(text: str, question: dict | None = None) -> list[Item]:
         "education": r"\b(save for|pay for|fund|study)\b.{0,30}\b(education|degree|course|university)\b",
         "family": r"\b(have|plan for|save for)\b.{0,20}\b(child|baby)\b",
     }.items() if re.search(terms, lower)), None)
-    if goal and not re.search(r"\b(don't|do not|never|no longer|not planning|not want|not taking)\b", lower):
+    if goal and not NEGATED.search(text) and (INTENT.search(text) or key == "discovery"):
         add("goals", goal, GOALS[goal])
     elif goal:
         goal = None
@@ -110,9 +112,9 @@ def supported_fact(item: Item, text: str, question: dict | None = None) -> bool:
     if any(candidate.key == item.key and candidate.value == item.value for candidate in offline(item.quote, question)):
         return True
     # Beyond the rules, save a first-person statement verbatim. Unverifiable paraphrases stay inferences.
-    return item.dimension != "goals" and isinstance(item.value, str) and item.value.casefold() in item.quote.casefold() and bool(
-        re.search(r"\b(I|my|we|our)\b", item.quote, re.I)
-    )
+    return (isinstance(item.value, str) and item.value.casefold() in item.quote.casefold()
+            and bool(re.search(r"\b(I|my|we|our)\b", item.quote, re.I))
+            and (item.dimension != "goals" or (INTENT.search(item.quote) and not NEGATED.search(item.quote))))
 
 
 async def extract(text: str, question: dict | None = None) -> list[Item]:

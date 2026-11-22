@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useStore } from "@/lib/store";
 import type { Change } from "@/lib/types";
-import { connectRealtime, voiceApi, type MemoryItem, type Speaker, type VoiceState, type VoiceStatus } from "@/lib/voice";
+import { connectLocal, connectRealtime, voiceApi, type MemoryItem, type Speaker, type Transport, type VoiceState, type VoiceStatus } from "@/lib/voice";
 import { Button } from "./ui";
 
 type Connection = { abort: AbortController; stream?: MediaStream; timer?: number };
@@ -20,6 +20,8 @@ export function VoicePanel({ person, active, setActive }: { person: string; acti
   const [state, setState] = useState<VoiceState>("connecting");
   const [remaining, setRemaining] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [capture, setCapture] = useState<((enabled: boolean) => void) | null>(null);
+  const [talking, setTalking] = useState(false);
   const [pending, setPending] = useState<Change[]>([]);
   const draftRef = useRef(draft);
   const connection = useRef<Connection | null>(null);
@@ -47,6 +49,8 @@ export function VoicePanel({ person, active, setActive }: { person: string; acti
     release();
     setActive(false);
     setRemaining(null);
+    setCapture(null);
+    setTalking(false);
     if (message) setNotice(message);
   }, [release, setActive]);
 
@@ -58,9 +62,12 @@ export function VoicePanel({ person, active, setActive }: { person: string; acti
     return () => {
       document.removeEventListener("visibilitychange", onHide);
       window.removeEventListener("pagehide", onPageHide);
-      release();
+      if (connection.current) {
+        release();
+        setActive(false);
+      }
     };
-  }, [end, release]);
+  }, [end, release, setActive]);
 
   async function start() {
     if (!status?.enabled || connection.current) return;
@@ -94,22 +101,33 @@ export function VoicePanel({ person, active, setActive }: { person: string; acti
       activity();
       tick();
       current.timer = window.setInterval(tick, 250);
-      await connectRealtime({
-        session, stream, signal: current.abort.signal, activity, state: setState, error: end,
-        transcript: async (speaker, text) => {
-          const result = await voiceApi.ingest(session.session_id, speaker, text, current.abort.signal);
+      const onResult = (result: Awaited<ReturnType<typeof voiceApi.tool>>) => {
+        if (current.abort.signal.aborted) return;
+        if (result.draft_changes?.length) setPending(result.draft_changes);
+        if (result.memory) setMemory(result.memory);
+      };
+      const options: Transport = {
+        session, stream, signal: current.abort.signal, activity, error: end,
+        state: (next) => { setState(next); if (next !== "listening") setTalking(false); },
+        transcript: async (speaker, text, check) => {
+          const result = check === undefined ? await voiceApi.ingest(session.session_id, speaker, text, current.abort.signal) : null;
           if (current.abort.signal.aborted) return;
-          setMemory(result.memory);
-          setLines((previous) => [...previous.slice(-7), { speaker, text, grounded: result.grounded }]);
+          if (result) setMemory(result.memory);
+          setLines((previous) => [...previous.slice(-7), { speaker, text, grounded: check ?? result?.grounded ?? true }]);
         },
         tool: async (...args) => {
           const result = await voiceApi.tool(session.session_id, ...args, draftRef.current, current.abort.signal);
           if (current.abort.signal.aborted) return {};
-          if (result.draft_changes?.length) setPending(result.draft_changes);
-          if (result.memory) setMemory(result.memory);
+          onResult(result);
           return result;
         },
-      });
+      };
+      if (session.provider === "local") {
+        const talk = await connectLocal({ ...options, onResult, draft: () => draftRef.current });
+        if (!current.abort.signal.aborted) setCapture(() => talk);
+      } else {
+        await connectRealtime(options);
+      }
     } catch (error) {
       if (!current.abort.signal.aborted) end(error instanceof Error ? error.message : "Voice could not start.");
     }
@@ -148,6 +166,8 @@ export function VoicePanel({ person, active, setActive }: { person: string; acti
       </div>
       {status?.reason && <p className="text-[12px] text-muted">{status.reason}</p>}
       {notice && <p role="status" className="text-[12px] text-warn">{notice}</p>}
+      {active && capture && <Button size="sm" variant="secondary" disabled={state !== "listening" && !talking}
+        onClick={() => { capture(!talking); setTalking(!talking); }}>{talking ? "Send turn" : "Start talking"}</Button>}
       {active && <p className="text-[12px] text-muted">AI assistant · {name(person)}’s discovery · synthetic data and simulations</p>}
       {lines.length > 0 && <details>
         <summary className="cursor-pointer font-medium text-accent">Transcript</summary>

@@ -97,3 +97,5 @@ Listed in-app (`···` → *Assumptions & sources*) and in `app/backend/converg
 - The recommendation search is bounded (single levers and pairs). Larger restructurings must be made by the user.
 - Identity is simulated by switching between partners; there is no authentication.
 - The live LLM path was verified for request shape and error fallback, but not run with a valid key in this environment.
+
+- Voice discovery is an AI interview over the synthetic twin. The engine computes its simulations, which are for planning only. Sensitive questions are skippable. The app stores transcripts and per-viewer memory in local SQLite, with a clear-memory control in Ask. Converge persists no audio. Hosted providers process the live audio or current text turn when enabled. See [Voice discovery](VOICE.md) for the limits.

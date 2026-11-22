@@ -157,3 +157,22 @@ def test_twin_routes_pair_session_and_viewer(session, tmp_path, monkeypatch):
         assert client.post("/api/twin/tool", json={"session_id": sid, "name": "get_summary"}).status_code == 200
         assert client.delete("/api/twin/memory", params={"person": "B"}).json() == {"memory": []}
         assert client.post("/api/twin/tool", json={"session_id": sid, "name": "get_summary"}).status_code == 422
+
+
+def test_hypothetical_goals_are_simulated_before_confirmation_but_not_draftable(session):
+    goals = [Goal(id="new", name="Trip", target_chf=1000, target_date="2027-06").model_dump()]
+    outcome = execute_tool("simulate_changes", {"changes": [{"path": "people.B.goals", "value": goals}]}, session)
+    assert outcome["after"]["people"][1]["goals"][0]["name"] == "Trip"
+    assert "draft_changes" not in outcome
+
+
+def test_confirmed_goal_updates_existing_goal_without_double_reserving_cash(session):
+    goal = Goal(id="existing", name="Sabbatical", target_chf=9000, target_date="2027-01", measure="liquid")
+    session.plan = apply_changes(session.plan, [Change(path="people.B.goals", value=[goal.model_dump()])])
+    turn(session, "I want a sabbatical with CHF 15k in May 2028")
+    for observation in session.memory.items("B"):
+        session.memory.resolve("B", observation["id"], "confirmed")
+    changes = execute_tool("propose_changes", {"from_confirmed_goals": True}, session)["draft_changes"]
+    [updated] = changes[0]["value"]
+    assert updated["id"] == "existing" and updated["measure"] == "liquid"
+    assert (updated["target_chf"], updated["target_date"]) == (15000, "2028-05")

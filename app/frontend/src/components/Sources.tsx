@@ -27,6 +27,11 @@ export function Sources() {
         Every number in Converge is either taken from the UBS synthetic dataset, derived from it, taken from a published source, or an explicit
         assumption you can change. Projections are conditional on these assumptions — they are not forecasts, and the indicative affordability check is not a lender decision.
       </p>
+      <p className="text-[13px] leading-5 text-ink-2">
+        The voice discovery assistant is AI and uses the synthetic twin. The engine supplies all plan results as simulations.
+        You can skip sensitive questions and clear your viewer’s transcript and memory from Ask.
+        Converge keeps that text in local SQLite and saves no audio. Hosted voice sends live audio to OpenAI for processing.
+      </p>
       <div className="flex flex-wrap gap-2 text-[11.5px] text-muted">
         <span className="flex items-center gap-1"><SourceTag kind="dataset" /> UBS synthetic data</span>
         <span className="flex items-center gap-1"><SourceTag kind="official" /> bank / authority publication</span>

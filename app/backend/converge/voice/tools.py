@@ -86,9 +86,17 @@ def goal_changes(plan: Plan, person: str, items: list[dict]) -> list[Change]:
             changes.extend([Change(path="shared.property.price", value=amount),
                             Change(path="shared.property.target_date", value=target)])
             continue
-        new = Goal(id=f"discovery-{slug}", name=title, target_chf=amount, target_date=target,
-                   priority=known.get(f"{slug}.priority", "medium"), source="user")
-        personal = [g for g in personal if g.id != new.id] + [new]
+        priority = known.get(f"{slug}.priority")
+        existing = next((g for g in personal if g.id == f"discovery-{slug}" or g.name.casefold() == title.casefold()), None)
+        if existing:
+            updated = existing.model_copy(update={
+                "target_chf": amount, "target_date": target,
+                "priority": priority if priority in ("high", "medium", "low") else existing.priority,
+            })
+            personal = [updated if goal.id == existing.id else goal for goal in personal]
+        else:
+            personal.append(Goal(id=f"discovery-{slug}", name=title, target_chf=amount, target_date=target,
+                                 priority=priority if priority in ("high", "medium", "low") else "medium", source="user"))
     if personal != original:
         changes.append(Change(path=f"people.{person}.goals", value=[g.model_dump() for g in personal]))
     return changes
@@ -119,8 +127,9 @@ def execute_tool(name: str, args: dict, session: Session) -> dict:
         result = summary(session.plan, person if parsed.scope == "personal" else None)
     elif name == "simulate_changes":
         after = apply_changes(session.plan, parsed.changes)
-        result = dict(before=summary(session.plan), after=summary(after),
-                      draft_changes=[ch.model_dump() for ch in parsed.changes])
+        result = dict(before=summary(session.plan), after=summary(after))
+        if not any(ch.path.startswith("people.") and ".goals" in ch.path for ch in parsed.changes):
+            result["draft_changes"] = [ch.model_dump() for ch in parsed.changes]
     elif name == "list_recommendations":
         result = recommend(session.plan)
     elif isinstance(parsed, ProposalArgs):

@@ -46,3 +46,8 @@ if VOICE_PROVIDER not in {"off", "openai_realtime", "local"}:
 
 VOICE_MAX_SECONDS = min(900, max(30, int(os.environ.get("CONVERGE_VOICE_MAX_SECONDS", "300"))))
 VOICE_IDLE_SECONDS = 30
+
+LOCAL_LLM_URL = os.environ.get("CONVERGE_LOCAL_LLM_URL", "http://127.0.0.1:11434/v1").strip()
+LOCAL_LLM_MODEL = os.environ.get("CONVERGE_LOCAL_LLM_MODEL", "").strip()
+LOCAL_STT_MODEL = os.environ.get("CONVERGE_LOCAL_STT_MODEL", "").strip()
+LOCAL_TTS_MODEL = os.environ.get("CONVERGE_LOCAL_TTS_MODEL", "").strip()
