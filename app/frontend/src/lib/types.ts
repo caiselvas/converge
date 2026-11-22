@@ -52,6 +52,12 @@ export interface Person {
   career_breaks: CareerBreak[];
 }
 
+export interface Stress {
+  mortgage_rate?: number;
+  expense_inflation?: number;
+  investment_return?: number;
+}
+
 export interface Plan {
   people: [Person, Person];
   shared: {
@@ -232,7 +238,16 @@ export interface RecPersonImpact {
   runway: [number | null, number | null];
   end_cash: [number, number];
   end_net_worth: [number, number];
-  goals: { name: string; met: [boolean, boolean]; projected: [number, number]; target: number }[];
+  goals: {
+    name: string;
+    met: [boolean, boolean];
+    projected: [number, number];
+    target: number;
+    target_date: [Month, Month];
+    reached_month: [Month | null, Month | null];
+    shortfall: [number, number];
+    in_horizon: boolean;
+  }[];
 }
 
 export interface Recommendation {
@@ -240,6 +255,7 @@ export interface Recommendation {
   strategy: "lifestyle" | "speed" | "resilience";
   strategy_title: string;
   strategy_blurb: string;
+  concession: boolean;
   title: string;
   changes: DescribedChange[];
   raw_changes: Change[];

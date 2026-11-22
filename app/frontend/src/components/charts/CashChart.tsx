@@ -24,9 +24,8 @@ interface Props {
 
 export function CashChart({ current, base, metric = "cash", height = 320, only, showFloors = true, showEvents = true, compareLabel = "Agreed plan" }: Props) {
   const ids = current.people.map((p) => p.id);
-  const showBase = !!base && JSON.stringify(base.series[ids[0]][metric]) + JSON.stringify(base.series[ids[1]][metric]) !==
-    JSON.stringify(current.series[ids[0]][metric]) + JSON.stringify(current.series[ids[1]][metric]);
   const visible = only === undefined ? [0, 1] : [only];
+  const showBase = !!base && visible.some((i) => JSON.stringify(base.series[ids[i]][metric]) !== JSON.stringify(current.series[ids[i]][metric]));
 
   const data = useMemo(
     () =>
@@ -48,7 +47,7 @@ export function CashChart({ current, base, metric = "cash", height = 320, only, 
 
   const ticks = current.months.filter((m) => m.endsWith("-01") || m.endsWith("-07"));
   const breaks = current.events.filter((e) => e.kind === "career_break" && (only === undefined || e.person === ids[only]));
-  const points = current.events.filter((e) => e.kind !== "career_break");
+  const points = current.events.filter((e) => e.kind !== "career_break" && (only === undefined || !e.person || e.person === ids[only]));
 
   return (
     <div className="w-full" style={{ height }}>
@@ -115,7 +114,7 @@ function ChartTooltip({ active, payload, label, current, visible, metric, showBa
 }) {
   if (!active || !payload?.length || !label) return null;
   const get = (k: string) => payload.find((p) => p.dataKey === k)?.value;
-  const ev = current.events.filter((e) => e.month === label);
+  const ev = current.events.filter((e) => e.month === label && (!e.person || visible.some((i) => current.people[i].id === e.person)));
   return (
     <div className="min-w-[200px] rounded-xl border border-line bg-white px-3.5 py-3 text-[12.5px] shadow-lg">
       <div className="mb-2 font-semibold text-ink">{monthLabel(label)}</div>
@@ -147,10 +146,10 @@ function ChartTooltip({ active, payload, label, current, visible, metric, showBa
   );
 }
 
-export function ChartLegend({ names, showBase, compareLabel = "Agreed plan", showFloor = true, showBreak = false }: { names: string[]; showBase?: boolean; compareLabel?: string; showFloor?: boolean; showBreak?: boolean }) {
+export function ChartLegend({ names, only, showBase, compareLabel = "Agreed plan", showFloor = true, showBreak = false }: { names: string[]; only?: number; showBase?: boolean; compareLabel?: string; showFloor?: boolean; showBreak?: boolean }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px] text-muted">
-      {names.map((n, i) => (
+      {names.map((n, i) => (only === undefined || only === i) && (
         <span key={n} className="flex items-center gap-1.5">
           <span className="h-0.5 w-4 rounded" style={{ background: HEX[i] }} />
           {n}

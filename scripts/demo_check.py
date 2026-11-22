@@ -62,5 +62,24 @@ def main() -> None:
           f"in {issue['worst_month']}; {len(fixes)} verified recommendations")
 
 
+    goal = next(g for g in home.person(emil_id).goals if g.name == "Career transition")
+    goal_changes = [
+        Change(path=f"people.{emil_id}.goals.{goal.id}.target_chf", value=220_000),
+        Change(path=f"people.{emil_id}.goals.{goal.id}.target_date", value="2030-12"),
+    ]
+    home_with_goal = evaluate(apply_changes(home, goal_changes))
+    assert next(g for g in home_with_goal["people"][1]["goals"] if g["id"] == goal.id)["met"]
+    goal_scenario = apply_changes(revised, goal_changes)
+    outcome = evaluate(goal_scenario)
+    goal_result = next(g for g in outcome["people"][1]["goals"] if g["id"] == goal.id)
+    assert outcome["status"] == "attention" and 45_000 < goal_result["shortfall_chf"] < 50_000
+    assert goal_result["reached_month"] == "2031-07"
+    concessions = [r for r in recommend(goal_scenario)["recommendations"] if r["concession"]]
+    assert concessions and all(r["verified"] for r in concessions)
+    print(f"Optional career transition target: {chf(goal_result['shortfall_chf'])} short in "
+          f"{goal_result['target_date']}, reached in {goal_result['reached_month']}; "
+          f"{concessions[0]['title']}")
+
+
 if __name__ == "__main__":
     main()

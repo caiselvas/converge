@@ -64,3 +64,27 @@ def test_assistant_offline(client):
         assert body["changes"][0]["value"][0]["months"] == 4
         assert body["changes"][0]["value"][0]["start"] == "2027-03"
     assert client.post("/api/assistant/interpret", json={"text": "x", "viewer": "nobody"}).status_code == 422
+
+
+def test_stress_overlay_changes_projection_without_entering_plan_or_draft(client):
+    changes = [{"path": "shared.property.enabled", "value": True}]
+    base = client.post("/api/simulate", json={"changes": changes}).json()
+    stress = {"mortgage_rate": 0.04}
+    result = client.post("/api/simulate", json={"changes": changes, "stress": stress})
+    assert result.status_code == 200
+    projected = result.json()
+    assert projected["evaluation"]["property"]["monthly_interest"] != base["evaluation"]["property"]["monthly_interest"]
+    assert projected["base"] == base["base"]
+    assert projected["plan"] == base["plan"]
+    assert projected["changes"] == base["changes"]
+    assert projected["approvers"] == base["approvers"]
+    assert client.get("/api/workspace").json()["plan"]["shared"]["property"]["enabled"] is False
+    recs = client.post("/api/recommendations", json={"changes": changes, "stress": stress})
+    assert recs.status_code == 200
+    assert all(c["path"] != "shared.property.mortgage_rate" for r in recs.json()["recommendations"] for c in r["raw_changes"])
+
+
+@pytest.mark.parametrize("stress", [{"mortgage_rate": -1}, {"tax_rate": 0.3}])
+def test_invalid_stress_overlay_returns_422(client, stress):
+    assert client.post("/api/simulate", json={"stress": stress}).status_code == 422
+    assert client.post("/api/recommendations", json={"stress": stress}).status_code == 422

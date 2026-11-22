@@ -1,21 +1,34 @@
 "use client";
 
-import { ChevronRight, Home, Users } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { CashChart, ChartLegend } from "./charts/CashChart";
-import { Decisions } from "./Decisions";
-import { Recommendations } from "./Recommendations";
-import { Avatar, Segmented, Skeleton, clsx } from "./ui";
+import { Decisions, StressTag } from "./Decisions";
+import { Recommendations, useRecommendationList } from "./Recommendations";
+import { Segmented, Skeleton, clsx } from "./ui";
 import { api, llmProviderLabel } from "@/lib/api";
 import { chf, monthLabel, pct } from "@/lib/format";
 import { mergeChanges } from "@/lib/plan";
-import { useDisplayed, useStore } from "@/lib/store";
-import type { Change, Evaluation, ExplainResponse, Issue } from "@/lib/types";
+import { scopedHref, scopedIssues, useDisplayed, useStore } from "@/lib/store";
+import type { Change, Evaluation, ExplainResponse, GoalStatus, Issue, Stress } from "@/lib/types";
 
-function headline(ev: Evaluation): { title: string; sub: string; issue: Issue | null } {
-  const hard = ev.issues.find((i) => i.severity === "hard");
-  const soft = ev.issues.find((i) => i.severity === "soft");
+function goalHeadline(goal: GoalStatus) {
+  return goal.reached_month
+    ? `${goal.name} slips to ${monthLabel(goal.reached_month)}.`
+    : `${goal.name} is ${chf(goal.shortfall_chf)} short.`;
+}
+
+function missedGoals(ev: Evaluation, personId?: string) {
+  return ev.people.filter((p) => !personId || p.id === personId)
+    .flatMap((p) => p.goals.filter((g) => g.in_horizon && !g.met).map((g) => ({ personId: p.id, goal: g })));
+}
+
+function headline(ev: Evaluation, personId?: string): { title: string; sub: string; issue: Issue | null } {
+  const issues = scopedIssues(ev, personId);
+  const hard = issues.find((i) => i.severity === "hard");
+  const soft = issues.find((i) => i.severity === "soft");
+  const person = ev.people.find((p) => p.id === personId);
   const name = (id: string | null) => ev.people.find((p) => p.id === id)?.name ?? "";
   if (hard?.kind === "liquidity_floor") {
     const p = ev.people.find((x) => x.id === hard.person)!;
@@ -34,17 +47,18 @@ function headline(ev: Evaluation): { title: string; sub: string; issue: Issue | 
     };
   }
   if (soft) {
-    return { title: soft.kind === "goal" ? `${soft.title}.` : `${soft.title}.`, sub: soft.detail, issue: soft };
+    const missed = missedGoals(ev, personId).find(({ personId: id, goal }) => soft.id === `goal:${id}:${goal.id}`);
+    return { title: missed ? goalHeadline(missed.goal) : `${soft.title}.`, sub: soft.detail, issue: soft };
   }
-  const tight = [...ev.people].sort((a, b) => a.headroom / a.floor - b.headroom / b.floor)[0];
+  const tight = person ?? [...ev.people].sort((a, b) => a.headroom / a.floor - b.headroom / b.floor)[0];
   return {
-    title: "Your plan works for both of you.",
+    title: person ? `${person.name}’s plan is on track.` : "Your plan works for both of you.",
     sub: `Tightest moment: ${tight.name} in ${monthLabel(tight.min_cash_month)}, ${chf(tight.headroom)} above the safety buffer.`,
     issue: null,
   };
 }
 
-function Explanation({ changes }: { changes: Change[] }) {
+function Explanation({ changes, stress }: { changes: Change[]; stress: Stress }) {
   const [result, setResult] = useState<ExplainResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -52,7 +66,7 @@ function Explanation({ changes }: { changes: Change[] }) {
     setBusy(true);
     setFailed(false);
     try {
-      setResult(await api.explain(changes));
+      setResult(await api.explain(changes, stress));
     } catch {
       setFailed(true);
     } finally {
@@ -80,7 +94,7 @@ function Explanation({ changes }: { changes: Change[] }) {
 }
 
 function Why({ issue, others }: { issue: Issue; others: Issue[] }) {
-  const { plan, ws, draft, preview } = useStore();
+  const { plan, ws, draft, preview, stress, scopedPerson } = useStore();
   const max = Math.max(1, ...issue.drivers.map((d) => d.amount_chf));
   const changes = plan && preview?.sim ? mergeChanges(draft, preview.changes, plan) : draft;
   return (
@@ -104,159 +118,126 @@ function Why({ issue, others }: { issue: Issue; others: Issue[] }) {
           Also: {others.map((o) => o.title).join(" · ")}
         </div>
       )}
-      <Explanation key={JSON.stringify([ws?.versions[0], changes])} changes={changes} />
+      {!scopedPerson && <Explanation key={JSON.stringify([ws?.versions[0], changes, stress])} changes={changes} stress={stress} />}
     </div>
   );
 }
 
-function Hero({ ev, base, hasDraft }: { ev: Evaluation; base: Evaluation | null; hasDraft: boolean }) {
-  const [why, setWhy] = useState(false);
-  const { preview } = useStore();
-  const h = headline(ev);
-  const dot = ev.status === "on_track" ? "bg-good" : ev.status === "attention" ? "bg-warn" : "bg-bad-strong";
-  const deltas = hasDraft && base ? ev.people.map((p, i) => ({ p, b: base.people[i] })).filter(({ p, b }) => Math.abs(p.min_cash - b.min_cash) >= 1) : [];
+function StatusDot({ issues }: { issues: Issue[] }) {
+  const tone = issues.some((i) => i.severity === "hard") ? "bg-bad-strong" : issues.length ? "bg-warn" : "bg-good";
+  return <span className={clsx("h-2 w-2 shrink-0 rounded-full", tone)} />;
+}
+
+function CashDeltas({ ev, base, personId, compact }: { ev: Evaluation; base: Evaluation; personId?: string; compact?: boolean }) {
   return (
-    <section className="pt-6 pb-2 sm:pt-10">
-      <div className="flex flex-wrap items-center gap-2 text-[13px] text-muted">
-        <span className={clsx("h-2 w-2 rounded-full", dot)} />
-        {preview ? <span className="font-medium text-brand">Preview — nothing is saved</span> : hasDraft ? <span className="font-medium text-accent">Your draft</span> : <span>Agreed plan</span>}
-        <span>· {monthLabel(ev.months[0])} – {monthLabel(ev.months[ev.months.length - 1])}</span>
+    <div aria-label="Lowest cash changes" className={clsx("flex flex-wrap gap-1.5", compact ? "mt-1" : "mt-4")}>
+      {ev.people.filter((p) => !personId || p.id === personId).map((p) => {
+        const before = base.people.find((partner) => partner.id === p.id);
+        if (!before) return null;
+        const delta = p.min_cash - before.min_cash;
+        const tone = p.breach && !before.breach ? "bg-bad-soft text-bad-strong" : delta >= 1 ? "bg-good-soft text-good" : "bg-page text-ink-2";
+        return (
+          <span key={p.id} className={clsx("tnum inline-flex items-center gap-1.5 rounded-full", compact ? "px-2 py-0.5 text-[11.5px]" : "px-3 py-1.5 text-[13px]", tone)}>
+            {p.name}{compact ? " low" : "’s lowest cash"} <b>{chf(p.min_cash, { compact: true })}</b>
+            <span className="opacity-80">({chf(delta, { sign: true, compact: Math.abs(delta) >= 10_000 })})</span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+export function OutcomeStrip() {
+  const { scope, scopedPerson, draft, preview, simError } = useStore();
+  const { current, base } = useDisplayed();
+  if (!current) return null;
+  const personId = scopedPerson?.id;
+  return (
+    <div className="border-b border-line bg-page">
+      <div className="mx-auto flex max-w-[1120px] items-center gap-2 px-4 md:px-5">
+        <Link href={scopedHref("/", scope)} aria-label={`View on Overview: ${headline(current, personId).title}`} className="block min-w-0 flex-1 py-1.5 hover:text-accent">
+          <div className="flex items-center gap-2 text-[13px] font-medium">
+            <StatusDot issues={scopedIssues(current, personId)} />
+            <span className="truncate">{headline(current, personId).title}</span>
+          </div>
+          {(draft.length > 0 || preview) && base && <CashDeltas ev={current} base={base} personId={personId} compact />}
+          {simError && <p className="mt-1 truncate text-[12px] text-bad-strong">{simError}</p>}
+        </Link>
+        <StressTag />
       </div>
-      <h1 className="mt-3 max-w-3xl text-[28px] leading-[1.15] font-semibold tracking-[-0.02em] text-ink sm:text-[36px]">{h.title}</h1>
-      <p className="mt-3 max-w-2xl text-[15px] leading-6 text-muted">
+    </div>
+  );
+}
+
+function Hero({ ev, base }: { ev: Evaluation; base: Evaluation | null }) {
+  const [why, setWhy] = useState(false);
+  const { preview, scopedPerson, draft, ws, viewer, name, setInboxOpen } = useStore();
+  const { list } = useRecommendationList();
+  const personId = scopedPerson?.id;
+  const issues = scopedIssues(ev, personId);
+  const h = headline(ev, personId);
+  const hasConflict = issues.some((i) => i.severity === "hard");
+  const pending = ws?.proposals.find((p) => p.status === "pending" && p.approvals[viewer] === "pending");
+  const goalRisks = missedGoals(ev, personId).filter(({ personId: id, goal }) => h.issue?.id !== `goal:${id}:${goal.id}`);
+  return (
+    <section className="pt-5 pb-1 sm:pt-7">
+      <div className="flex flex-wrap items-center gap-2 text-[13px] text-muted">
+        <StatusDot issues={issues} />
+        {preview ? <span className="font-medium text-brand">Preview</span> : draft.length ? <span className="font-medium text-accent">Your draft</span> : <span>Agreed plan</span>}
+        <span>· {monthLabel(ev.months[0])} – {monthLabel(ev.months[ev.months.length - 1])}</span>
+        <StressTag />
+      </div>
+      <h1 className="mt-2 max-w-3xl text-[28px] leading-[1.15] font-semibold tracking-[-0.02em] text-ink sm:text-[36px]">{h.title}</h1>
+      <p className="mt-2 max-w-2xl text-[15px] leading-6 text-muted">
         {h.sub}{" "}
         {h.issue && <button onClick={() => setWhy(!why)} className="font-medium text-accent hover:underline">{why ? "Hide" : "Why?"}</button>}
       </p>
-      {why && h.issue && <Why issue={h.issue} others={ev.issues.filter((i) => i.id !== h.issue!.id)} />}
-      {deltas.length > 0 && (
-        <div className="mt-5 flex flex-wrap gap-2">
-          {deltas.map(({ p, b }) => {
-            const d = p.min_cash - b.min_cash;
-            const tone = p.breach && !b.breach ? "bg-bad-soft text-bad-strong" : d > 0 ? "bg-good-soft text-good" : "bg-white text-ink-2 ring-1 ring-line";
-            return (
-              <span key={p.id} className={clsx("tnum inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px]", tone)}>
-                {p.name}&apos;s lowest cash <b>{chf(p.min_cash, { compact: true })}</b>
-                <span className="opacity-80">({chf(d, { sign: true, compact: Math.abs(d) >= 10_000 })})</span>
-              </span>
-            );
-          })}
-        </div>
-      )}
+      {hasConflict && list.length > 0 && <a href="#fixes" className="mt-1 inline-block text-[13px] font-semibold text-accent hover:underline"
+        onClick={(event) => {
+          const target = document.getElementById("fixes");
+          if (!target) return;
+          event.preventDefault();
+          target.focus({ preventScroll: true });
+          target.scrollIntoView({ block: "start" });
+        }}>See {list.length} {list.length === 1 ? "way" : "ways"} to fix this</a>}
+      {goalRisks.map(({ personId: id, goal }) => <p key={`${id}:${goal.id}`} className="mt-1 text-[13px] text-warn">{goalHeadline(goal)}</p>)}
+      {pending && <button type="button" onClick={() => setInboxOpen(true)} className="mt-2 block max-w-full truncate text-left text-[13px] text-muted hover:text-ink">
+        {name(pending.author)} proposed {pending.title} <span className="font-medium text-accent">· Review</span>
+      </button>}
+      {why && h.issue && <Why issue={h.issue} others={issues.filter((i) => i.id !== h.issue?.id)} />}
+      {base && <CashDeltas ev={ev} base={base} personId={personId} />}
     </section>
   );
 }
 
-function PersonTile({ ev, i, base }: { ev: Evaluation; i: number; base: Evaluation | null }) {
-  const { openSheet, plan, viewer } = useStore();
-  const p = ev.people[i];
-  const person = plan?.people[i];
-  const goalsMet = p.goals.filter((g) => g.met || !g.in_horizon).length;
-  const changed = base && Math.abs(base.people[i].min_cash - p.min_cash) >= 1;
-  return (
-    <button onClick={() => openSheet({ kind: "person", id: p.id })} className="group flex flex-col rounded-2xl border border-line bg-white p-5 text-left transition-shadow hover:shadow-[0_6px_24px_rgb(15_23_42/0.07)]">
-      <div className="flex w-full items-center justify-between">
-        <span className="flex items-center gap-2.5">
-          <Avatar name={p.name} index={i} size={30} />
-          <span className="text-[15px] font-semibold">{p.name}{p.id === viewer && <span className="ml-1.5 text-[12px] font-normal text-muted">you</span>}</span>
-        </span>
-        <ChevronRight size={18} className="text-subtle transition-transform group-hover:translate-x-0.5" />
-      </div>
-      <div className="mt-5 text-[12.5px] text-muted">Cash today</div>
-      <div className="tnum text-[26px] font-semibold tracking-tight">{chf(person?.opening_cash ?? p.start_cash, { compact: true })}</div>
-      <div className="mt-4 space-y-1.5 text-[13px]">
-        <div className="flex justify-between gap-2">
-          <span className="text-muted">Lowest point</span>
-          <span className={clsx("tnum font-medium", p.breach ? "text-bad-strong" : changed ? "text-accent" : "text-ink")}>
-            {person && p.min_cash >= person.opening_cash ? "Never below today" : `${chf(p.min_cash, { compact: true })} · ${monthLabel(p.min_cash_month, true)}`}
-          </span>
-        </div>
-        <div className="flex justify-between gap-2">
-          <span className="text-muted">Goals</span>
-          <span className={clsx("font-medium", goalsMet < p.goals.length ? "text-warn" : "text-ink")}>{p.goals.length ? `${goalsMet} of ${p.goals.length} on track` : "None"}</span>
-        </div>
-      </div>
-    </button>
-  );
-}
-
-function SharedTile({ ev }: { ev: Evaluation }) {
-  const { openSheet, draftPlan } = useStore();
-  if (!draftPlan) return null;
-  const pr = ev.property;
-  const hh = draftPlan.shared.household;
-  const [a, b] = ev.people;
-  return (
-    <button onClick={() => openSheet({ kind: "shared" })} className="group flex flex-col rounded-2xl border border-dashed border-line-strong bg-page/60 p-5 text-left transition-colors hover:bg-white">
-      <div className="flex w-full items-center justify-between">
-        <span className="flex items-center gap-2.5">
-          <span className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-white ring-1 ring-line">{pr ? <Home size={15} /> : <Users size={15} />}</span>
-          <span className="text-[15px] font-semibold">Together</span>
-        </span>
-        <ChevronRight size={18} className="text-subtle transition-transform group-hover:translate-x-0.5" />
-      </div>
-      {pr ? (
-        <>
-          <div className="mt-5 text-[12.5px] text-muted">Home · {monthLabel(pr.purchase)}</div>
-          <div className="tnum text-[26px] font-semibold tracking-tight">{chf(pr.price, { compact: true })}</div>
-          <div className="mt-4 text-[13px]">
-            <div className="mb-1.5 flex justify-between text-muted"><span>Deposit</span><span className="tnum">{a.name} {pct(pr.ownership[0])} · {b.name} {pct(pr.ownership[1])}</span></div>
-            <div className="flex h-1.5 overflow-hidden rounded-full">
-              <div className="bg-p0" style={{ width: pct(pr.ownership[0]) }} />
-              <div className="w-0.5 bg-white" />
-              <div className="bg-p1" style={{ width: pct(pr.ownership[1]) }} />
-            </div>
-          </div>
-        </>
-      ) : hh.enabled ? (
-        <>
-          <div className="mt-5 text-[12.5px] text-muted">Living together from {monthLabel(hh.move_in)}</div>
-          <div className="tnum text-[26px] font-semibold tracking-tight">{chf(hh.rent)}<span className="text-[14px] font-normal text-muted">/mo rent</span></div>
-        </>
-      ) : (
-        <>
-          <div className="mt-5 text-[15px] font-medium text-ink">Nothing shared yet</div>
-          <p className="mt-1 text-[13px] leading-5 text-muted">Plan a home or moving in together. Each of you keeps your own accounts.</p>
-        </>
-      )}
-    </button>
-  );
-}
-
 export function PlanView() {
-  const { ws, draft, preview } = useStore();
+  const { draft, preview, scopedPerson, idx, simError, stress } = useStore();
   const { current, base } = useDisplayed();
   const [metric, setMetric] = useState<"cash" | "net_worth">("cash");
-  if (!current || !ws) {
-    return (
-      <div className="space-y-6 pt-10">
-        <Skeleton className="h-10 w-2/3" />
-        <Skeleton className="h-[340px]" />
-      </div>
-    );
-  }
-  const hasDraft = draft.length > 0 || !!preview;
-  const cmp = hasDraft ? base : null;
+  if (!current) return (
+    <div className="space-y-6 pt-10">
+      <Skeleton className="h-10 w-2/3" />
+      <Skeleton className="h-[340px]" />
+    </div>
+  );
+  const only = scopedPerson ? idx(scopedPerson.id) : undefined;
+  const editing = draft.length > 0 || !!preview;
+  const cmp = editing || Object.keys(stress).length ? base : null;
   return (
-    <div className="space-y-10">
+    <div className="space-y-5 sm:space-y-6">
       <div>
-        <Hero ev={current} base={cmp} hasDraft={hasDraft} />
-        <div className="mt-6"><Decisions /></div>
+        <Hero ev={current} base={editing ? base : null} />
+        {simError && <p role="alert" className="mt-2 text-[13px] text-bad-strong">{simError}</p>}
+        <div className="mt-3"><Decisions /></div>
       </div>
-
+      <Recommendations />
       <section aria-label="Projection" className="rounded-2xl border border-line bg-white px-2 pt-4 pb-4 sm:px-5 sm:pt-5">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-3 px-3 sm:px-1">
-          <ChartLegend names={current.people.map((p) => p.name)} showBase={hasDraft} showFloor={metric === "cash"} showBreak={current.events.some((e) => e.kind === "career_break")} />
+          <ChartLegend names={current.people.map((p) => p.name)} only={only} showBase={!!cmp} showFloor={metric === "cash"}
+            showBreak={current.events.some((e) => e.kind === "career_break" && (!scopedPerson || e.person === scopedPerson.id))} />
           <Segmented size="sm" ariaLabel="Metric" value={metric} onChange={setMetric} options={[{ value: "cash", label: "Cash" }, { value: "net_worth", label: "Net worth" }]} />
         </div>
-        <CashChart current={current} base={cmp} metric={metric} showFloors={metric === "cash"} height={320} />
-      </section>
-
-      <Recommendations />
-
-      <section aria-label="Partners" className="grid gap-4 md:grid-cols-3">
-        <PersonTile ev={current} i={0} base={cmp} />
-        <SharedTile ev={current} />
-        <PersonTile ev={current} i={1} base={cmp} />
+        <CashChart current={current} base={cmp} only={only} metric={metric} showFloors={metric === "cash"} height={320} />
       </section>
     </div>
   );

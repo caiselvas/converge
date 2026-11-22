@@ -1,12 +1,37 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { api, ApiError } from "./api";
 import { applyChanges, mergeChanges, upsert } from "./plan";
-import type { Change, Plan, Proposal, RecResponse, SimResponse, Workspace } from "./types";
+import type { Change, Evaluation, Person, Plan, Proposal, RecResponse, SimResponse, Workspace, Stress } from "./types";
 
-export type Sheet = { kind: "person"; id: string } | { kind: "shared" } | null;
+export type Scope = "nina" | "together" | "emil";
+
+export function scopedIssues(evaluation: Evaluation, personId?: string) {
+  return personId ? evaluation.issues.filter((issue) => issue.person === personId) : evaluation.issues;
+}
+
+export function scopedHref(path: string, scope: Scope, hash = "") {
+  return `${path}?scope=${scope}${hash}`;
+}
+
+const scopeChanged = "converge:scope";
+
+function urlScope(): Scope {
+  const scope = new URLSearchParams(window.location.search).get("scope");
+  return scope === "nina" || scope === "emil" ? scope : "together";
+}
+
+function subscribeToScope(update: () => void) {
+  window.addEventListener("popstate", update);
+  window.addEventListener(scopeChanged, update);
+  return () => {
+    window.removeEventListener("popstate", update);
+    window.removeEventListener(scopeChanged, update);
+  };
+}
 
 interface Toast {
   id: number;
@@ -25,8 +50,11 @@ interface Ctx {
   loadError: string | null;
   viewer: string;
   setViewer: (id: string) => void;
-  sheet: Sheet;
-  openSheet: (s: Sheet) => void;
+  scope: Scope;
+  setScope: (scope: Scope) => void;
+  scopedPerson: Person | null;
+  stress: Stress;
+  setStress: (stress: Stress) => void;
   /** The agreed plan (both partners). */
   plan: Plan | null;
   /** Agreed plan with the viewer's draft changes applied locally (instant). */
@@ -85,11 +113,32 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [ws, setWs] = useState<Workspace | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [viewer, setViewerState] = useState<string>("");
-  const [sheet, openSheet] = useState<Sheet>(null);
+  const path = usePathname();
+  const scope = useSyncExternalStore<Scope>(subscribeToScope, urlScope, () => "together");
+  const [stress, setStressState] = useState<Stress>({});
+  const setScope = useCallback((next: Scope) => {
+    if (next === urlScope()) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("scope", next);
+    window.history.pushState(null, "", url);
+    window.dispatchEvent(new Event(scopeChanged));
+  }, []);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const selected = urlScope();
+    if (url.searchParams.get("scope") === selected) return;
+    url.searchParams.set("scope", selected);
+    window.history.replaceState(null, "", url);
+  }, [path]);
   const [drafts, setDrafts] = useState<Record<string, Change[]>>({});
   const [sim, setSim] = useState<SimResponse | null>(null);
   const [simError, setSimError] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const setStress = useCallback((next: Stress) => {
+    setStressState(next);
+    setPreview(null);
+  }, []);
   const [dismissed, setDismissed] = useState<string[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [inboxOpen, setInboxOpen] = useState(false);
@@ -141,6 +190,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const plan = ws?.plan ?? null;
   const draft = useMemo(() => (viewer ? drafts[viewer] ?? [] : []), [drafts, viewer]);
   const draftPlan = useMemo(() => (plan ? applyChanges(plan, draft) : null), [plan, draft]);
+  const scopedPerson = scope === "together" ? null : draftPlan?.people[scope === "nina" ? 0 : 1] ?? null;
 
   const updateDraft = useCallback(
     (fn: (d: Change[]) => Change[]) => {
@@ -170,7 +220,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   // Live simulation of the draft (debounced, abortable). Loading state is derived from request keys.
   const draftKey = JSON.stringify(draft);
   const planKey = ws ? `${ws.versions.length}` : "";
-  const simKey = `${planKey}|${draftKey}`;
+  const stressKey = JSON.stringify(stress);
+  const simKey = `${planKey}|${draftKey}|${stressKey}`;
   const [simFor, setSimFor] = useState("");
   const [simErrFor, setSimErrFor] = useState("");
   useEffect(() => {
@@ -178,7 +229,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const ctrl = new AbortController();
     const t = setTimeout(async () => {
       try {
-        const r = await api.simulate(JSON.parse(draftKey), ctrl.signal);
+        const r = await api.simulate(JSON.parse(draftKey), ctrl.signal, JSON.parse(stressKey));
         setSim(r);
         setSimError(null);
         setSimFor(simKey);
@@ -192,7 +243,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(t);
       ctrl.abort();
     };
-  }, [draftKey, simKey, ws]);
+  }, [draftKey, simKey, stressKey, ws]);
   const simLoading = !!ws && simFor !== simKey && simErrFor !== simKey;
 
   // Recommendations for the current draft whenever it has issues.
@@ -206,13 +257,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     if (!needsRecs) return;
     const ctrl = new AbortController();
     api
-      .recommendations(JSON.parse(draftKey), ctrl.signal)
+      .recommendations(JSON.parse(draftKey), ctrl.signal, JSON.parse(stressKey))
       .then((r) => setRecsState({ key: recsKey, data: r }))
       .catch((e) => {
         if ((e as Error).name !== "AbortError") setRecsState({ key: recsKey, data: null });
       });
     return () => ctrl.abort();
-  }, [needsRecs, recsKey, draftKey]);
+  }, [needsRecs, recsKey, draftKey, stressKey]);
   const recs: RecResponse | null = !simFresh
     ? recsState.data
     : !needsRecs
@@ -224,9 +275,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     (label: string, changes: Change[]) => {
       const all = plan ? mergeChanges(draft, changes, plan) : changes;
       setPreview({ label, changes, sim: null });
-      api.simulate(all).then((s) => setPreview((p) => (p && p.label === label ? { ...p, sim: s } : p)));
+      api.simulate(all, undefined, stress)
+        .then((s) => setPreview((p) => (p?.changes === changes ? { ...p, sim: s } : p)))
+        .catch(() => setPreview((p) => (p?.changes === changes ? null : p)));
     },
-    [draft, plan],
+    [draft, plan, stress],
   );
   const stopPreview = useCallback(() => setPreview(null), []);
   const dismissRec = useCallback((id: string) => setDismissed((d) => [...d, id]), []);
@@ -287,6 +340,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const reset = useCallback(async () => {
     await api.reset();
     setDrafts({});
+    setStressState({});
     setPreview(null);
     setDismissed([]);
     await refresh();
@@ -294,8 +348,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, [refresh, toast]);
 
   const value: Ctx = {
-    ws, loadError, viewer, setViewer, sheet, openSheet, plan, draftPlan, draft,
-    setChange, addChanges, removeChange, discardDraft, sim, simLoading, simError, preview, startPreview,
+    ws, loadError, viewer, setViewer, scope, setScope, scopedPerson, stress, setStress, plan, draftPlan, draft,
+    setChange, addChanges, removeChange, discardDraft, sim, simLoading, simError: simErrFor === simKey ? simError : null, preview, startPreview,
     stopPreview, recs, recsLoading, refreshRecs, dismissed, dismissRec, propose, decide, restore, reset,
     refresh, toasts, toast, inboxOpen, setInboxOpen, sourcesOpen, setSourcesOpen, name, idx,
   };

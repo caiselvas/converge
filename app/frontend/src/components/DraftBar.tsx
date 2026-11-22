@@ -44,7 +44,7 @@ function autoTitle(changes: DescribedChange[]): string {
 }
 
 export function DraftBar() {
-  const { draft, sim, simLoading, discardDraft, removeChange, propose, viewer, name, idx, preview, stopPreview, ws, sheet } = useStore();
+  const { draft, sim, simLoading, discardDraft, removeChange, propose, viewer, name, idx, preview, stopPreview, ws, simError } = useStore();
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const described = sim?.changes ?? [];
@@ -57,8 +57,8 @@ export function DraftBar() {
   const selfOnly = others.length === 0;
 
   return (
-    <div className={clsx("fixed inset-x-0 bottom-0 z-30 px-3 pb-3 sm:px-6 sm:pb-4", sheet && "lg:right-[440px]")}>
-      <div className="mx-auto max-w-[1072px]">
+    <div className="pointer-events-auto">
+      <div>
         {preview && (
           <div className="fade-up mb-2 flex items-center justify-between gap-3 rounded-xl bg-brand px-4 py-2 text-[13px] text-white shadow-lg">
             <span className="flex min-w-0 items-center gap-2">
@@ -104,7 +104,7 @@ export function DraftBar() {
               <Button
                 variant="primary"
                 size="sm"
-                disabled={busy || simLoading || !ws}
+                disabled={busy || simLoading || !!simError || !ws}
                 onClick={async () => {
                   setBusy(true);
                   await propose(title || autoTitle(described));

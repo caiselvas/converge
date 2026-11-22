@@ -1,5 +1,5 @@
 import type {
-  AssumptionRow, Change, ExplainResponse, InterpretResponse, LlmProvider, Proposal, RecResponse, SimResponse, Workspace,
+  AssumptionRow, Change, ExplainResponse, InterpretResponse, LlmProvider, Proposal, RecResponse, SimResponse, Stress, Workspace,
 } from "./types";
 
 export const llmProviderLabel = { anthropic: "Claude", openai: "OpenAI" } satisfies Record<LlmProvider, string>;
@@ -35,10 +35,10 @@ async function call<T>(path: string, init?: RequestInit & { json?: unknown }): P
 export const api = {
   health: () => call<{ ok: boolean; llm_available: boolean; llm_model: string | null }>("/health"),
   workspace: () => call<Workspace>("/workspace"),
-  simulate: (changes: Change[], signal?: AbortSignal) =>
-    call<SimResponse>("/simulate", { json: { changes }, signal }),
-  recommendations: (changes: Change[], signal?: AbortSignal) =>
-    call<RecResponse>("/recommendations", { json: { changes }, signal }),
+  simulate: (changes: Change[], signal?: AbortSignal, stress?: Stress) =>
+    call<SimResponse>("/simulate", { json: { changes, stress }, signal }),
+  recommendations: (changes: Change[], signal?: AbortSignal, stress?: Stress) =>
+    call<RecResponse>("/recommendations", { json: { changes, stress }, signal }),
   propose: (author: string, title: string, changes: Change[], kind = "manual", note = "") =>
     call<Proposal>("/proposals", { json: { author, title, changes, kind, note } }),
   approve: (id: string, person: string) => call<Proposal>(`/proposals/${id}/approve`, { json: { person } }),
@@ -50,5 +50,5 @@ export const api = {
   provenance: (pid: string) => call<Record<string, unknown>>(`/provenance/${pid}`),
   interpret: (text: string, viewer: string, changes: Change[]) =>
     call<InterpretResponse>("/assistant/interpret", { json: { text, viewer, changes } }),
-  explain: (changes: Change[]) => call<ExplainResponse>("/assistant/explain", { json: { changes } }),
+  explain: (changes: Change[], stress?: Stress) => call<ExplainResponse>("/assistant/explain", { json: { changes, stress } }),
 };

@@ -6,7 +6,7 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from converge import ai, assumptions, config
 from converge.data import profiles as profile_data
@@ -31,10 +31,19 @@ app.add_middleware(
 store = Store()
 
 
+class StressIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mortgage_rate: float | None = None
+    expense_inflation: float | None = None
+    investment_return: float | None = None
+
+
 class ChangesIn(BaseModel):
     changes: list[Change] = Field(default_factory=list, max_length=200)
     base: Literal["current", "original"] = "current"
     include_base: bool = True
+    stress: StressIn | None = None
 
 
 class ProposalIn(BaseModel):
@@ -62,6 +71,7 @@ class InterpretIn(BaseModel):
 class ExplainIn(BaseModel):
     changes: list[Change] = Field(default_factory=list, max_length=200)
     with_recommendations: bool = False
+    stress: StressIn | None = None
 
 
 def _base(which: str = "current") -> Plan:
@@ -73,6 +83,18 @@ def _apply(plan: Plan, changes: list[Change]) -> Plan:
         return apply_changes(plan, normalise(changes))
     except ChangeError as e:
         raise HTTPException(422, str(e)) from None
+
+
+def _with_stress(plan: Plan, stress: StressIn | None) -> Plan:
+    if stress is None:
+        return plan
+    paths = {
+        "mortgage_rate": "shared.property.mortgage_rate",
+        "expense_inflation": "assumptions.expense_inflation",
+        "investment_return": "assumptions.investment_return",
+    }
+    return _apply(plan, [Change(path=paths[key], value=value) for key, value in
+                         stress.model_dump(exclude_none=True).items()])
 
 
 def _described(plan: Plan, changes: list[Change]) -> list[dict]:
@@ -114,7 +136,7 @@ def workspace():
 def simulate_endpoint(body: ChangesIn):
     base = _base(body.base)
     plan = _apply(base, body.changes)
-    ev = evaluate(plan)
+    ev = evaluate(_with_stress(plan, body.stress))
     out = dict(
         evaluation=ev,
         plan=plan.model_dump(),
@@ -129,7 +151,7 @@ def simulate_endpoint(body: ChangesIn):
 @app.post("/api/recommendations")
 def recommendations(body: ChangesIn):
     plan = _apply(_base(body.base), body.changes)
-    return recommend(plan)
+    return recommend(_with_stress(plan, body.stress))
 
 
 @app.post("/api/proposals")
@@ -223,7 +245,7 @@ def interpret(body: InterpretIn):
 
 @app.post("/api/assistant/explain")
 def explain(body: ExplainIn):
-    plan = _apply(store.plan, body.changes)
+    plan = _with_stress(_apply(store.plan, body.changes), body.stress)
     ev = evaluate(plan)
     recs = recommend(plan)["recommendations"] if body.with_recommendations else None
     return ai.explain(ev, recs)

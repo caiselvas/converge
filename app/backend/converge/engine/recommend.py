@@ -202,6 +202,8 @@ def _generate(plan: Plan, ev: dict) -> dict[str, list[Candidate]]:
             goal = next(g for g in p.goals if g.id == gid)
             for d in (6, 12, 18, 24):
                 nd = M.add(goal.target_date, d)
+                if M.index(nd, end) > 0:
+                    break
                 add(f"goal:{gid}", Candidate(("goal",), [Change(path=f"people.{p.id}.goals.{gid}.target_date", value=nd)],
                                              {"goal": d}, [f"Revisit {p.name}'s {goal.name.lower()} target: {M.label(nd)}"]))
     return gens
@@ -321,7 +323,11 @@ def _person_impact(ev_before: dict, ev_after: dict) -> list[dict]:
             end_cash=[b["end_cash"], a["end_cash"]],
             end_net_worth=[b["end_net_worth"], a["end_net_worth"]],
             goals=[dict(name=g["name"], met=[goals_b[g["id"]]["met"], g["met"]],
-                        projected=[goals_b[g["id"]]["projected_chf"], g["projected_chf"]], target=g["target_chf"])
+                        projected=[goals_b[g["id"]]["projected_chf"], g["projected_chf"]], target=g["target_chf"],
+                        target_date=[goals_b[g["id"]]["target_date"], g["target_date"]],
+                        reached_month=[goals_b[g["id"]]["reached_month"], g["reached_month"]],
+                        shortfall=[goals_b[g["id"]]["shortfall_chf"], g["shortfall_chf"]],
+                        in_horizon=g["in_horizon"])
                    for g in a["goals"] if g["id"] in goals_b],
         ))
     return out
@@ -398,6 +404,7 @@ def _explain(plan: Plan, c: Candidate, ev0: dict, strat: str) -> dict:
         strategy=strat,
         strategy_title=STRATEGIES[strat]["title"],
         strategy_blurb=STRATEGIES[strat]["blurb"],
+        concession="goal" in cost,
         title=title,
         changes=changes_out,
         raw_changes=[ch.model_dump() for ch in c.changes],
@@ -431,6 +438,14 @@ def recommend(plan: Plan, n: int = 3) -> dict:
         improving = [c for c in cands if _feasible(c) and
                      len([i for i in c.ev["issues"] if i["severity"] == "soft"]) < len(soft0) and not c.extras.get("new_soft")]
         chosen = _select(improving, n)
+        if n > 0 and not any("goal" in c.cost for _, c in chosen):
+            concessions = [c for c in improving if c.kinds == ("goal",)]
+            if concessions:
+                concession = min(concessions, key=_total_cost)
+                if len(chosen) == n:
+                    chosen[-1] = (chosen[-1][0], concession)
+                else:
+                    chosen.append(("speed", concession))
     else:
         chosen = _select(cands, n)
     recs = [_explain(plan, c, ev0, s) for s, c in chosen]
