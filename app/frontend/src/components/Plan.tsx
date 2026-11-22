@@ -1,5 +1,6 @@
 "use client";
 
+import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -7,7 +8,7 @@ import { useState } from "react";
 import { CashChart, ChartLegend } from "./charts/CashChart";
 import { InPlanDecisions, StressTag } from "./Decisions";
 import { decisionHref } from "./decisions/registry";
-import { Avatar, Segmented, Skeleton, clsx } from "./ui";
+import { Avatar, Button, Segmented, Skeleton, clsx } from "./ui";
 import { api, llmProviderLabel } from "@/lib/api";
 import { chf, monthLabel, pct } from "@/lib/format";
 import { scopedHref, scopedIssues, useDisplayed, useStore } from "@/lib/store";
@@ -24,12 +25,37 @@ function missedGoals(ev: Evaluation, personId?: string) {
     .flatMap((p) => p.goals.filter((g) => g.in_horizon && !g.met).map((g) => ({ personId: p.id, goal: g })));
 }
 
-function headline(ev: Evaluation, personId?: string): { title: string; sub: string; issue: Issue | null } {
+/** What the draft changes, named only when every change belongs to one decision. */
+function draftCause(draft: Change[], homeLead: boolean) {
+  const kinds = new Set(draft.map((c) => c.path.includes(".career_breaks") ? "break" : c.path === "shared.children" ? "child"
+    : c.path.startsWith("shared.property.") ? "home" : "other"));
+  const only = kinds.size === 1 ? [...kinds][0] : null;
+  return only === "break" ? "the career break" : only === "child" ? "having a child" : only === "home" ? (homeLead ? "buying it" : "the home purchase") : "your draft";
+}
+
+function headline(ev: Evaluation, personId?: string, base?: Evaluation | null, draft: Change[] = []): { title: string; lead?: string; accent?: string; sub: string; issue: Issue | null } {
   const issues = scopedIssues(ev, personId);
   const hard = issues.find((i) => i.severity === "hard");
   const soft = issues.find((i) => i.severity === "soft");
   const person = ev.people.find((p) => p.id === personId);
   const name = (id: string | null) => ev.people.find((p) => p.id === id)?.name ?? "";
+  const homeOk = !!ev.property?.affordability?.passes && !issues.some((i) => i.kind === "affordability");
+  const atRisk = ev.people.filter((p) => p.breach);
+  if (!personId && atRisk.length === 1 && ev.people.length === 2) {
+    // One partner is safe while the other is not: lead with that contrast.
+    const p = atRisk[0];
+    const safe = ev.people.find((x) => x.id !== p.id)!;
+    const before = draft.length ? base?.people.find((x) => x.id === p.id) : undefined;
+    const caused = !!before && !before.breach;
+    const lead = homeOk ? "You can afford the home." : `${safe.name} stays secure.`;
+    const accent = caused ? `But ${draftCause(draft, homeOk)} puts ${p.name}’s financial safety at risk.` : `But ${p.name}’s financial safety is at risk.`;
+    return {
+      title: `${lead} ${accent}`, lead, accent,
+      sub: `${p.name} falls ${chf(-p.headroom)} below the safety buffer in ${monthLabel(p.min_cash_month)}, while ${safe.name} stays above it throughout.`
+        + (caused && before ? ` In the agreed plan, ${p.name} stays ${chf(before.headroom)} above it.` : ""),
+      issue: issues.find((i) => i.kind === "liquidity_floor" && i.person === p.id) ?? hard ?? null,
+    };
+  }
   if (hard?.kind === "liquidity_floor") {
     const p = ev.people.find((x) => x.id === hard.person)!;
     return {
@@ -52,7 +78,7 @@ function headline(ev: Evaluation, personId?: string): { title: string; sub: stri
   }
   const tight = person ?? [...ev.people].sort((a, b) => a.headroom / a.floor - b.headroom / b.floor)[0];
   return {
-    title: person ? `${person.name}’s plan is on track.` : "Your plan works for both of you.",
+    title: person ? `${person.name}’s plan is on track.` : homeOk ? "You can afford the home, and you both stay safe." : "Your plan works for both of you.",
     sub: `Tightest moment: ${tight.name} in ${monthLabel(tight.min_cash_month)}, ${chf(tight.headroom)} above the safety buffer.`,
     issue: null,
   };
@@ -151,13 +177,14 @@ export function OutcomeStrip() {
   const { current, base } = useDisplayed();
   if (!current) return null;
   const personId = scopedPerson?.id;
+  const h = headline(current, personId, base, draft);
   return (
     <div className="border-b border-line bg-page">
       <div className="mx-auto flex max-w-[1120px] items-center gap-2 px-4 md:px-5">
-        <Link href={scopedHref("/", scope)} aria-label={`View on Overview: ${headline(current, personId).title}`} className="block min-w-0 flex-1 py-1.5 hover:text-accent">
+        <Link href={scopedHref("/", scope)} aria-label={`View on Overview: ${h.title}`} className="block min-w-0 flex-1 py-1.5 hover:text-accent">
           <div className="flex items-center gap-2 text-[13px] font-medium">
             <StatusDot issues={scopedIssues(current, personId)} />
-            <span className="truncate">{headline(current, personId).title}</span>
+            <span className="truncate">{h.title}</span>
           </div>
           {draft.length > 0 && base && <CashDeltas ev={current} base={base} personId={personId} compact />}
           {simError && <p className="mt-1 truncate text-[12px] text-bad-strong">{simError}</p>}
@@ -175,7 +202,7 @@ function Hero({ ev, base }: { ev: Evaluation; base: Evaluation | null }) {
   const [opening, setOpening] = useState(false);
   const personId = scopedPerson?.id;
   const issues = scopedIssues(ev, personId);
-  const h = headline(ev, personId);
+  const h = headline(ev, personId, base, draft);
   const hasConflict = issues.some((i) => i.severity === "hard");
   const breakChange = draft.some((c) => c.path.includes(".career_breaks"));
   const homeChange = draft.some((c) => c.path.startsWith("shared.property."));
@@ -209,13 +236,16 @@ function Hero({ ev, base }: { ev: Evaluation; base: Evaluation | null }) {
         <span>· {monthLabel(ev.months[0])} – {monthLabel(ev.months[ev.months.length - 1])}</span>
         <StressTag />
       </div>
-      <h1 className="mt-2 max-w-3xl text-[28px] leading-[1.15] font-semibold tracking-[-0.02em] text-ink sm:text-[36px]">{h.title}</h1>
-      <p className="mt-2 max-w-2xl text-[15px] leading-6 text-muted">
+      <h1 className="mt-2 max-w-3xl text-[28px] leading-[1.15] font-semibold tracking-[-0.02em] text-balance text-ink sm:text-[38px]">
+        {h.lead ? <>{h.lead} <span className="text-bad-strong">{h.accent}</span></> : h.title}
+      </h1>
+      <p className="tnum mt-3 max-w-2xl text-[15.5px] leading-6 text-ink-2">
         {h.sub}{" "}
         {h.issue && <button onClick={() => setWhy(!why)} className="font-medium text-accent hover:underline">{why ? "Hide" : "Why?"}</button>}
       </p>
-      {hasConflict && <button type="button" disabled={opening} onClick={openComparison}
-        className="mt-1 inline-block min-h-10 text-[13px] font-semibold text-accent hover:underline disabled:opacity-50">Compare ways to fix this</button>}
+      {hasConflict && <Button variant="primary" size="lg" loading={opening} disabled={opening} onClick={openComparison} className="mt-4 rounded-full px-5">
+        Explore ways to fix this <ArrowRight size={17} aria-hidden />
+      </Button>}
       {goalRisks.map(({ personId: id, goal }) => <p key={`${id}:${goal.id}`} className="mt-1 text-[13px] text-warn">{goalHeadline(goal)}</p>)}
       {pending && <button type="button" onClick={() => setInboxOpen(true)} className="mt-2 block max-w-full truncate text-left text-[13px] text-muted hover:text-ink">
         {name(pending.author)} proposed {pending.title} <span className="font-medium text-accent">· Review</span>
