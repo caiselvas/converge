@@ -1,0 +1,27 @@
+[project]
+name = "converge-backend"
+version = "0.1.0"
+description = "Converge — deterministic financial twin engine and API for couples"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.8",
+    "pandas>=2.2",
+    "python-dotenv>=1.0",
+    "anthropic>=0.40",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["converge"]
+
+[tool.pytest.ini_options]
+testpaths = ["../../tests/backend"]
+pythonpath = ["."]

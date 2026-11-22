@@ -37,3 +37,7 @@ CLAUDE.local.md
 .idea/
 .vscode/
 *.log
+
+# Converge runtime state / caches
+app/backend/.state/
+app/backend/.cache/

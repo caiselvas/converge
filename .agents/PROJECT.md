@@ -27,3 +27,9 @@ Local reference data: `external/ubs/`
 ## Important
 Financial calculations must be reproducible and explainable.
 LLMs handle language and assistance, not financial arithmetic.
+
+## Running and checking
+- `make install`, `make dev` (backend :8000, frontend :3000), `make test`, `make lint`, `make build`.
+- Every plan modification goes through `Change(path, value)` on the lever whitelist in
+  `app/backend/converge/engine/changes.py`; add new levers there (and to `docs/model.md`).
+- Model and assumptions: `docs/model.md`; demo script: `docs/demo.md`.

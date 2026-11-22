@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --color-page: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-line: #e5e7eb;
+  --color-line-strong: #d4d8de;
+  --color-ink: #0f172a;
+  --color-ink-2: #334155;
+  --color-muted: #64748b;
+  --color-subtle: #94a3b8;
+
+  --color-brand: #0b3b60;
+  --color-accent: #0e7c86;
+
+  /* Partner colours (by position, not name) */
+  --color-p0: #3d5bd9;
+  --color-p0-soft: #eef1fd;
+  --color-p1: #0d9488;
+  --color-p1-soft: #e7f6f4;
+  --color-shared: #475569;
+
+  --color-good: #047857;
+  --color-good-soft: #e8f6ef;
+  --color-warn: #b45309;
+  --color-warn-soft: #fdf4e3;
+  --color-bad: #c2410c;
+  --color-bad-strong: #b91c1c;
+  --color-bad-soft: #fdeeea;
+}
+
+html {
+  background: var(--color-page);
+}
+
+body {
+  background: var(--color-page);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Range input */
+input[type="range"].range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--range-color, var(--color-ink)) var(--range-fill, 50%), var(--color-line) var(--range-fill, 50%));
+  outline: none;
+}
+input[type="range"].range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--range-color, var(--color-ink));
+  box-shadow: 0 1px 3px rgb(15 23 42 / 0.15);
+  cursor: pointer;
+}
+input[type="range"].range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--range-color, var(--color-ink));
+  cursor: pointer;
+}
+input[type="range"].range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px rgb(14 124 134 / 0.25);
+}
+
+/* Hide number spinners */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-up {
+  animation: fade-up 180ms ease-out both;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.pulse-soft {
+  animation: pulse-soft 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-up, .pulse-soft { animation: none; }
+}
