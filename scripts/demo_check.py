@@ -81,5 +81,22 @@ def main() -> None:
           f"{concessions[0]['title']}")
 
 
+    child_plan = apply_changes(home, [Change(path="shared.children", value=[dict(
+        id="child-1", label="Child 1", birth="2028-01", allowance_recipient=emil_id,
+        leave=dict(birth_parent=nina_id, other_parent=emil_id),
+    )])])
+    child_eval = evaluate(child_plan)
+    january = child_eval["months"].index("2028-01")
+    may = child_eval["months"].index("2028-05")
+    child = child_eval["children"][0]
+    birth, kita = child["costs"][january], child["costs"][may]
+    assert child_eval["checks"]["ok"] and birth["childcare"] == 0 and kita["childcare"] > 0
+    assert child_eval["series"][emil_id]["family_allowance"][january] == birth["allowance"] > 0
+    assert any(e["kind"] == "child_birth" and e["month"] == child["birth"] for e in child_eval["events"])
+    print(f"Child scenario: {chf(birth['net_cost'])} net in {child['birth']}; "
+          f"{chf(kita['net_cost'])} net in {child_eval['months'][may]} "
+          f"(Kita {chf(kita['childcare'])}, allowance {chf(kita['allowance'])})")
+
+
 if __name__ == "__main__":
     main()

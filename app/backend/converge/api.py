@@ -11,10 +11,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from converge import ai, assumptions, config
 from converge.data import profiles as profile_data
 from converge.data.ubs import DataUnavailableError
+from converge.engine import months as M
 from converge.engine.changes import ChangeError, apply_changes, describe, format_value, lever_catalogue, required_approvers
 from converge.engine.evaluate import evaluate
 from converge.engine.recommend import recommend
-from converge.models import Change, Plan
+from converge.models import KITA_INFANT_TARIFF, Change, Child, ParentalLeave, Plan
 from converge.store import Store, WorkflowError, normalise
 
 logging.basicConfig(level=logging.INFO)
@@ -122,6 +123,11 @@ def health():
 @app.get("/api/workspace")
 def workspace():
     ws = store.load()
+    first, second = ws.plan.people
+    child = Child(
+        id="child-1", label="Child 1", birth=M.add(ws.plan.assumptions.start, 12),
+        allowance_recipient=first.id, leave=ParentalLeave(birth_parent=first.id, other_parent=second.id),
+    )
     return dict(
         plan=ws.plan.model_dump(),
         people=[dict(id=p.id, name=p.name) for p in ws.plan.people],
@@ -129,6 +135,7 @@ def workspace():
                   for v in ws.versions],
         proposals=[p.model_dump() for p in ws.proposals],
         llm_available=ai.llm_available(),
+        child_defaults=dict(child=child.model_dump(), first_day_tariff=KITA_INFANT_TARIFF),
     )
 
 

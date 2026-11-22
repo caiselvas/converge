@@ -65,7 +65,7 @@ export function CashChart({ current, base, metric = "cash", height = 320, only, 
               <ReferenceLine key={`e-${k}-${e.kind}`} x={e.month} stroke="#94a3b8" strokeDasharray="2 3"
                 label={(props: { viewBox?: { x?: number; y?: number } }) => (
                   <text x={(props.viewBox?.x ?? 0) + 4} y={(props.viewBox?.y ?? 0) + 10 + (k % 2) * 13} fontSize={11} fill="#475569">
-                    {e.kind === "purchase" ? "Buy home" : "Move in"}
+                    {e.kind === "move_in" ? "Move in" : e.label}
                   </text>
                 )} />
             ))}

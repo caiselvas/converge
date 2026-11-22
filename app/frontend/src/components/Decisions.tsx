@@ -1,13 +1,14 @@
 "use client";
 
 import * as Popover from "@radix-ui/react-popover";
-import { Briefcase, Gauge, Home, X } from "lucide-react";
+import { Baby, Briefcase, Gauge, Home, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
 import { chf, monthLabel, pct } from "@/lib/format";
 import { scopedHref, useStore } from "@/lib/store";
 import type { Person, Stress } from "@/lib/types";
+import { useAddChild } from "./ChildPlan";
 import { CareerBreakForm } from "./PersonPlan";
 import { Range, Segmented, clsx } from "./ui";
 
@@ -100,8 +101,11 @@ export function StressTag() {
 
 export function Decisions() {
   const { draftPlan, scopedPerson, addChanges, setChange } = useStore();
+  const { addChild } = useAddChild();
   if (!draftPlan) return null;
   const property = draftPlan.shared.property;
+  const children = draftPlan.shared.children;
+  const firstChild = children.length ? [...children].sort((a, b) => a.birth.localeCompare(b.birth))[0] : null;
   const people = scopedPerson ? [scopedPerson] : draftPlan.people;
   const withoutBreak = people.filter((p) => !p.career_breaks.length);
   return (
@@ -115,6 +119,15 @@ export function Decisions() {
           {property.enabled ? `Home · ${chf(property.price, { compact: true })} · ${monthLabel(property.purchase, true)}` : "+ Buy a home"}
         </Link>
         {property.enabled && <RemoveDecision label="Remove home purchase" onClick={() => setChange("shared.property.enabled", false)} />}
+      </span>}
+      {!scopedPerson && <span className={clsx("inline-flex items-center rounded-full", firstChild && "border border-line-strong bg-white")}>
+        <Link href={scopedHref("/goals", "together", "#children")} className={clsx(chip, firstChild && "border-0 shadow-none")}
+          onClick={() => { if (!firstChild) addChild(); }}>
+          <Baby size={16} className="text-muted" />
+          {firstChild ? `${children.length === 1 ? "Child" : `${children.length} children`} · ${monthLabel(firstChild.birth)}` : "+ Have a child"}
+        </Link>
+        {firstChild && children.length === 1 &&
+          <RemoveDecision label="Remove child from plan" onClick={() => setChange("shared.children", [])} />}
       </span>}
       {people.flatMap((person) => person.career_breaks.map((entry) => (
         <span key={`${person.id}:${entry.id}`} className="inline-flex max-w-full items-center rounded-full border border-line-strong bg-white">

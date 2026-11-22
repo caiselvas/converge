@@ -6,9 +6,22 @@ choice made by Converge, editable) or ``user`` (entered in the app).
 """
 from __future__ import annotations
 
-from converge.models import Plan
+from converge.models import (
+    BIRTH_LEAVE_DAYS, CHILD_ALLOWANCE_BASE, CHILD_ALLOWANCE_OLDER, CHILD_EVERYDAY_DEFAULT,
+    KITA_INFANT_TARIFF, KITA_OLDER_TARIFF, LEAVE_DAILY_CAP, LEAVE_REPLACEMENT, OTHER_PARENT_LEAVE_DAYS, Child, Plan,
+)
 
 SOURCES = {
+    "zh_allowance": dict(
+        name="Canton of Zurich — Family allowances", date="accessed 2026-11-22",
+        url="https://www.zh.ch/de/soziales/sozialhilfe/sozialhilfehandbuch/flexdata-definition/11-weitere-leistungen-soziale-sicherheit/11-1-sozialversicherungsleistungen/11-1-13-ueberblick-ueber-die-familienzulagen.html",
+    ),
+    "zh_kita": dict(
+        name="Canton of Zurich — Childcare report, Table 9", date="2020",
+        url="https://www.zh.ch/content/dam/zhweb/bilder-dokumente/themen/bildung/bildungssystem/studien/20201201_kinderbetreuungsbericht.pdf",
+    ),
+    "ahv_birth": dict(name="AHV/EO — Maternity allowance", url="https://www.ahv-iv.ch/p/6.02.e", date="accessed 2026-11-22"),
+    "ahv_other_parent": dict(name="AHV/EO — Other-parent allowance", url="https://www.ahv-iv.ch/p/6.04.e", date="accessed 2026-11-22"),
     "ubs_data": dict(name="UBS × LauzHack 2026 AI Financial Twin synthetic datasets", url=None, date="2026-11 (challenge release)"),
     "ubs_mortgage": dict(
         name="UBS — How much equity do you need to buy a house?",
@@ -46,6 +59,21 @@ def registry(plan: Plan) -> list[dict]:
              note="Snapshot dated 2025-01-01 (no investment transactions in the ledger); grown at the assumed return from Jan 2027."),
         dict(id="relationship", name="Nina and Emil as a couple", value=None, unit=None, kind="illustrative", source=None,
              note="Two unrelated synthetic profiles linked as a hypothetical couple for the demonstration."),
+        dict(id="child_everyday", name="Default everyday child budget", value=CHILD_EVERYDAY_DEFAULT, unit="CHF/month",
+             kind="illustrative", source=None, note="Editable estimate including health insurance."),
+        dict(id="child_allowance", name="Zurich child allowance through the 12th birthday month", value=CHILD_ALLOWANCE_BASE,
+             unit="CHF/month", kind="official", source="zh_allowance",
+             note=f"CHF {CHILD_ALLOWANCE_OLDER:g} from the next month. The projection ends the child allowance in the 16th birthday month. Zurich has no birth allowance."),
+        dict(id="kita_tariff", name="Zurich full-price Kita day before age 18 months", value=KITA_INFANT_TARIFF,
+             unit="CHF/day", kind="official", source="zh_kita",
+             note=f"CHF {KITA_OLDER_TARIFF:g} from 18 months. Unindexed report figures based on the 2018 survey. City subsidies are excluded."),
+        dict(id="kita_schedule", name="Default days in childcare", value=Child.model_fields["childcare_days_per_week"].default,
+             unit="days/week", kind="illustrative", source=None,
+             note="Starts four months after birth and stops at age four by default. Each month is modelled as 4.2 weeks."),
+        dict(id="birth_leave", name="Birth-parent leave", value=BIRTH_LEAVE_DAYS, unit="days", kind="official", source="ahv_birth",
+             note=f"{LEAVE_REPLACEMENT:.0%} of prior earnings, capped at CHF {LEAVE_DAILY_CAP:g} per day."),
+        dict(id="other_parent_leave", name="Other-parent leave", value=OTHER_PARENT_LEAVE_DAYS, unit="days", kind="official",
+             source="ahv_other_parent", note=f"Two weeks with the same {LEAVE_REPLACEMENT:.0%} replacement and CHF {LEAVE_DAILY_CAP:g} daily cap."),
         dict(id="tax_rate", name="Optional extra deduction", value=a.tax_rate, unit="share of net income", kind="illustrative", source=None,
              note="Salary transactions reflect net pay. The default extra deduction is 0%. Set a positive rate to model "
                   "additional deductions from that pay."),

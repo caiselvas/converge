@@ -20,10 +20,14 @@ cash[t] = cash[t-1] + income - tax - spending - household_transfer - housing
 """
 from __future__ import annotations
 
+from calendar import monthrange
 from dataclasses import dataclass, field
 
 from converge.engine import months as M
-from converge.models import Plan
+from converge.models import (
+    BIRTH_LEAVE_DAYS, CHILD_ALLOWANCE_BASE, CHILD_ALLOWANCE_OLDER, KITA_INFANT_TARIFF,
+    KITA_OLDER_TARIFF, LEAVE_DAILY_CAP, LEAVE_REPLACEMENT, OTHER_PARENT_LEAVE_DAYS, Plan,
+)
 
 FLOW_KEYS = (
     "income",
@@ -46,6 +50,11 @@ class PersonSeries:
     floor: float
     income: list[float] = field(default_factory=list)
     usual_income: list[float] = field(default_factory=list)
+    family_allowance: list[float] = field(default_factory=list)
+    career_break_loss: list[float] = field(default_factory=list)
+    parental_leave_loss: list[float] = field(default_factory=list)
+    everyday_child_costs: list[float] = field(default_factory=list)
+    childcare: list[float] = field(default_factory=list)
     tax: list[float] = field(default_factory=list)
     spending: list[float] = field(default_factory=list)
     household: list[float] = field(default_factory=list)
@@ -72,6 +81,13 @@ class PersonSeries:
 
 
 @dataclass
+class ChildMonth:
+    everyday: float = 0.0
+    childcare: float = 0.0
+    allowance: float = 0.0
+
+
+@dataclass
 class SimResult:
     plan: Plan
     months: list[str]
@@ -84,6 +100,7 @@ class SimResult:
     purchase_index: int | None
     move_in_index: int | None
     affordability: dict | None
+    child_costs: dict[str, list[ChildMonth]]
     checks: dict
 
 
@@ -97,6 +114,49 @@ def household_share_first(plan: Plan, inc_first: float, inc_second: float) -> fl
     return 0.5 if total <= 0 else inc_first / total
 
 
+def _child_flows(plan: Plan, months: list[str]) -> tuple[dict[str, list[ChildMonth]], list[dict[int, tuple[float, float]]]]:
+    """Return per-child costs and per-parent monthly leave fractions and benefits."""
+    a = plan.assumptions
+    days = [monthrange(int(month[:4]), int(month[5:]))[1] for month in months]
+    positions = {p.id: i for i, p in enumerate(plan.people)}
+    costs = {}
+    leave_rates: list[dict[int, dict[int, float]]] = [{}, {}]
+    for child in plan.shared.children:
+        birth = M.index(child.birth, a.start)
+        series = [ChildMonth() for _ in months]
+        costs[child.id] = series
+        for t in range(max(0, birth), len(months)):
+            age = t - birth
+            inflation = (1 + a.expense_inflation) ** (t / 12)
+            childcare = 0.0
+            if child.childcare_start_months_after_birth <= age < child.childcare_until_age * 12:
+                tariff = child.childcare_day_tariff
+                if tariff is None:
+                    tariff = KITA_INFANT_TARIFF if age < 18 else KITA_OLDER_TARIFF
+                childcare = child.childcare_days_per_week * 4.2 * tariff * inflation
+            allowance = CHILD_ALLOWANCE_BASE if age <= 144 else CHILD_ALLOWANCE_OLDER if age <= 192 else 0.0
+            series[t] = ChildMonth(child.everyday_cost_monthly * inflation, childcare, allowance)
+        for parent, available in (
+            (child.leave.birth_parent, BIRTH_LEAVE_DAYS), (child.leave.other_parent, OTHER_PARENT_LEAVE_DAYS),
+        ):
+            i = positions[parent]
+            salary = plan.people[i].income_monthly * (1 + a.income_growth) ** (max(0, birth) / 12)
+            rate = min(LEAVE_DAILY_CAP, LEAVE_REPLACEMENT * salary / 30)
+            t = birth
+            while available > 0 and t < len(months):
+                month = M.add(a.start, t)
+                length = days[t] if t >= 0 else monthrange(int(month[:4]), int(month[5:]))[1]
+                taken = min(available, length)
+                if t >= 0:
+                    paid_days = leave_rates[i].setdefault(t, {})
+                    for day in range(taken):
+                        paid_days[day] = max(rate, paid_days.get(day, 0.0))
+                available -= taken
+                t += 1
+    leave = [{t: (len(paid) / days[t], sum(paid.values())) for t, paid in rates.items()} for rates in leave_rates]
+    return costs, leave
+
+
 def simulate(plan: Plan) -> SimResult:
     a = plan.assumptions
     H = a.horizon_months
@@ -104,6 +164,8 @@ def simulate(plan: Plan) -> SimResult:
     months = [M.add(start, t) for t in range(H)]
     hh = plan.shared.household
     pr = plan.shared.property
+    child_costs, leave = _child_flows(plan, months) if plan.shared.children else ({}, [{}, {}])
+    child_recipients = [(child_costs[c.id], c.allowance_recipient) for c in plan.shared.children]
 
     purchase_idx = M.index(pr.purchase, start) if pr.enabled else None
     if purchase_idx is not None and not (0 <= purchase_idx < H):
@@ -163,6 +225,14 @@ def simulate(plan: Plan) -> SimResult:
         # --- incomes
         usual = [p.income_monthly * growth for p in plan.people]
         actual = []
+        allowance = [0.0, 0.0]
+        everyday = childcare = 0.0
+        for costs, recipient in child_recipients:
+            cost = costs[t]
+            everyday += cost.everyday
+            childcare += cost.childcare
+            allowance[0 if recipient == plan.people[0].id else 1] += cost.allowance
+        on_break = False
         break_one_off = [0.0, 0.0]
         for i, c in enumerate(comp):
             factor = 1.0
@@ -172,11 +242,17 @@ def simulate(plan: Plan) -> SimResult:
                 if t == bs and cost > 0:
                     break_one_off[i] += cost
                     series[i].one_off_items.append((t, f"{lbl} costs", cost))
-            actual.append(usual[i] * factor + c["bonus"])
+            salary = usual[i] * factor
+            fraction, benefit = leave[i].get(t, (0.0, 0.0))
+            earnings = salary * (1 - fraction) + benefit
+            actual.append(earnings + c["bonus"] + allowance[i])
+            series[i].career_break_loss.append(usual[i] - salary)
+            series[i].parental_leave_loss.append(salary - earnings)
+            series[i].family_allowance.append(allowance[i])
+            on_break = on_break or earnings < usual[i] - 1e-9
 
         # --- household split
         s1 = household_share_first(plan, usual[0], usual[1])
-        on_break = any(actual[i] < usual[i] + comp[i]["bonus"] - 1e-9 for i in range(2))
         if plan.shared.split.adjust_for_breaks and on_break:
             # While a partner is on a career break, contributions follow actual income.
             tot = actual[0] + actual[1]
@@ -191,6 +267,7 @@ def simulate(plan: Plan) -> SimResult:
             hh_cost = (hh.utilities + hh.groceries + (0.0 if owned else hh.rent)) * infl
             if t == cohabit_idx and hh.enabled:
                 moving = hh.moving_cost
+        hh_cost += everyday + childcare
 
         # --- property
         purchase_now = owned and t == purchase_idx
@@ -241,7 +318,7 @@ def simulate(plan: Plan) -> SimResult:
             c = comp[i]
             s.cash_open.append(cash[i])
             income = actual[i]
-            tax = a.tax_rate * income  # Optional extra deduction from ledger net income.
+            tax = a.tax_rate * (income - allowance[i])
             spending = c["personal_budget"] * infl + (0.0 if cohabit else c["own_home_budget"] * infl)
             household = shares[i] * (hh_cost + moving)
             transfers[i] = household
@@ -278,6 +355,8 @@ def simulate(plan: Plan) -> SimResult:
             s.tax.append(tax)
             s.spending.append(spending)
             s.household.append(household)
+            s.everyday_child_costs.append(shares[i] * everyday)
+            s.childcare.append(shares[i] * childcare)
             s.housing.append(housing)
             s.amortization.append(amortization)
             s.loan_payment.append(loan_payment)
@@ -318,6 +397,7 @@ def simulate(plan: Plan) -> SimResult:
         purchase_index=purchase_idx,
         move_in_index=cohabit_idx,
         affordability=affordability,
+        child_costs=child_costs,
         checks={},
     )
     res.checks = verify(res)

@@ -14,7 +14,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from converge.engine import months as M
-from converge.models import Change, DescribedChange, Plan
+from converge.models import Change, Child, DescribedChange, Plan
 
 
 class ChangeError(ValueError):
@@ -59,6 +59,7 @@ LEVERS: list[Lever] = [
     Lever("shared.split.mode", "Cost-sharing rule", "enum", "shared"),
     Lever("shared.split.custom_share_first", "{first}'s share of household costs", "share", "shared"),
     Lever("shared.split.adjust_for_breaks", "Partner covers more during a career break", "bool", "shared"),
+    Lever("shared.children", "Children and parental leave", "children", "shared"),
     Lever("shared.property.enabled", "Buy a home", "bool", "shared"),
     Lever("shared.property.purchase", "Purchase date", "month", "shared"),
     Lever("shared.property.price", "Property price", "CHF", "shared"),
@@ -199,6 +200,11 @@ def format_value(unit: str, v: Any) -> str:
         return f"{int(v)} months"
     if unit == "bool":
         return "On" if v else "Off"
+    if unit == "children" and isinstance(v, list):
+        return "; ".join(
+            f"{child.label} · {M.label(child.birth)} · {child.childcare_days_per_week:g} Kita days/week"
+            for child in map(Child.model_validate, v)
+        ) or "None"
     if unit == "list" and isinstance(v, list) and all(isinstance(x, dict) and "months" in x for x in v):
         if not v:
             return "None"

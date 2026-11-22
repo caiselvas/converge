@@ -6,6 +6,7 @@ import { chf, monthLabel, pct } from "@/lib/format";
 import { getPath } from "@/lib/plan";
 import { useDisplayed, useStore } from "@/lib/store";
 import type { Plan } from "@/lib/types";
+import { ChildExpenses, ChildGoals } from "./ChildPlan";
 import { EditRow, PlanSection } from "./EditRow";
 import { InfoTip, MonthField, NumberField, Range, Segmented, Toggle, clsx } from "./ui";
 
@@ -30,7 +31,7 @@ export function SharedGoals({ plan, base }: { plan: Plan; base: Plan }) {
   const [a, b] = plan.people;
   const aff = current?.property?.affordability;
   const prop = current?.property;
-  const hasBreak = plan.people.some((p) => p.career_breaks.length > 0);
+  const hasLeave = plan.shared.children.length > 0 || plan.people.some((p) => p.career_breaks.length > 0);
 
   return (
     <>
@@ -87,6 +88,8 @@ export function SharedGoals({ plan, base }: { plan: Plan; base: Plan }) {
       </PlanSection>
       </div>
 
+      <ChildGoals plan={plan} />
+
       <PlanSection title="Contribution split">
           <div className="py-3">
             <Segmented ariaLabel="Cost-sharing rule" value={sp.mode} onChange={(v) => set("shared.split.mode", v)}
@@ -96,8 +99,8 @@ export function SharedGoals({ plan, base }: { plan: Plan; base: Plan }) {
             )}
             <p className="mt-1 text-[12px] text-muted">Household costs, paid via a joint account. Home costs follow ownership.</p>
           </div>
-          {hasBreak && (
-            <ToggleRow label="Cover each other during a career break" sub="Contributions follow actual income while one partner earns less"
+          {hasLeave && (
+            <ToggleRow label="Cover each other during a break or parental leave" sub="Contributions follow actual income while one partner earns less"
               checked={sp.adjust_for_breaks} onChange={(v) => set("shared.split.adjust_for_breaks", v)} />
           )}
       </PlanSection>
@@ -115,7 +118,8 @@ export function SharedExpenses({ plan, base }: { plan: Plan; base: Plan }) {
   const ch = (path: string) => getPath(plan, path) !== getPath(base, path);
   const months = current?.months ?? [];
   const firstTransfer = current?.household.joint_transfers.findIndex((total) => total > 0) ?? -1;
-  const index = month && months.includes(month) ? months.indexOf(month) : Math.max(0, firstTransfer);
+  const firstCare = months.findIndex((_, i) => current?.children.some((entry) => entry.costs[i].childcare > 0));
+  const index = month && months.includes(month) ? months.indexOf(month) : firstCare >= 0 ? firstCare : Math.max(0, firstTransfer);
   return (
     <>
       <PlanSection title="Shared household costs">
@@ -146,6 +150,8 @@ export function SharedExpenses({ plan, base }: { plan: Plan; base: Plan }) {
         <EditRow label="Maintenance" value={chf(prop.monthly_maintenance)} />
         <EditRow label="Amortisation" value={chf(prop.monthly_amortization)} />
       </PlanSection>}
+      {current?.children.map((child) =>
+        <ChildExpenses key={child.id} label={child.label} month={months[index]} cost={child.costs[index]} />)}
       {current && <PlanSection title="Who pays what" action={
         <select aria-label="Contribution month" value={months[index]} onChange={(e) => setMonth(e.target.value)} className="max-w-full rounded-lg border border-line bg-white py-1.5 text-[12px] text-ink">
           {months.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}

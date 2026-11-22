@@ -88,3 +88,38 @@ def test_stress_overlay_changes_projection_without_entering_plan_or_draft(client
 def test_invalid_stress_overlay_returns_422(client, stress):
     assert client.post("/api/simulate", json={"stress": stress}).status_code == 422
     assert client.post("/api/recommendations", json={"stress": stress}).status_code == 422
+
+
+def test_child_changes_require_both_partners(client):
+    defaults = client.get("/api/workspace").json()["child_defaults"]["child"]
+    changes = [{"path": "shared.children", "value": [defaults]}]
+    result = client.post("/api/simulate", json={"changes": changes})
+    assert result.status_code == 200
+    assert result.json()["approvers"] == ["A", "B"]
+    assert result.json()["evaluation"]["children"][0]["birth"] == defaults["birth"]
+    proposal = client.post("/api/proposals", json={"author": "A", "title": "Child plan", "changes": changes}).json()
+    assert proposal["status"] == "pending"
+    assert client.get("/api/workspace").json()["plan"]["shared"]["children"] == []
+    approved = client.post(f"/api/proposals/{proposal['id']}/approve", json={"person": "B"})
+    assert approved.status_code == 200
+    assert client.get("/api/workspace").json()["plan"]["shared"]["children"] == [defaults]
+
+
+@pytest.mark.parametrize("invalid", [
+    {"birth": "2028-13"},
+    {"childcare_days_per_week": 6},
+    {"childcare_day_tariff": -10},
+    {"allowance_recipient": "unknown"},
+    {"leave": {"birth_parent": "A", "other_parent": "A"}},
+])
+def test_invalid_child_levers_return_422(client, invalid):
+    defaults = client.get("/api/workspace").json()["child_defaults"]["child"]
+    change = {"path": "shared.children", "value": [{**defaults, **invalid}]}
+    assert client.post("/api/simulate", json={"changes": [change]}).status_code == 422
+
+
+def test_child_limit_and_unique_ids(client):
+    defaults = client.get("/api/workspace").json()["child_defaults"]["child"]
+    for children in ([defaults, defaults], [{**defaults, "id": f"child-{i}"} for i in range(4)]):
+        change = {"path": "shared.children", "value": children}
+        assert client.post("/api/simulate", json={"changes": [change]}).status_code == 422

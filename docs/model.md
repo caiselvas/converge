@@ -40,6 +40,14 @@ cash_i[t]  = cash_i[t-1] + income − deduct − spending − household − hous
 - **Career break.** Income is multiplied by `income_pct` for the break's months, with optional one-off costs in the first month. Overlapping breaks are rejected.
 - **Net worth** = cash + investments + property share − mortgage share − loans. Liquidity (cash) is tracked separately.
 
+### Planning for a child
+
+- A shared plan can contain up to three children. Both partners approve changes. Everyday costs start in the birth month and go through the joint account with childcare, even if the partners live separately. The editable everyday budget starts at CHF 700 per month, including health insurance. Zurich discontinued its child-cost table in 2026. [Canton of Zurich notice](https://www.zh.ch/de/familie/eltern-in-trennung/unterhalt-elterliche-sorge/kinderkosten-tabelle.html)
+- Kita costs equal days per week × 4.2 × day tariff. The default is two days a week starting four months after birth and ending before the fourth birthday month. The default day tariff is CHF 138 before age 18 months and CHF 120 from that month. A custom tariff applies at every age. The engine uses the unindexed report figures as plan-start inputs and applies the plan's expense inflation to both childcare and everyday costs. [Canton of Zurich childcare report, Table 9](https://www.zh.ch/content/dam/zhweb/bilder-dokumente/themen/bildung/bildungssystem/studien/20201201_kinderbetreuungsbericht.pdf#page=63)
+- One Zurich child allowance goes to the selected partner from the birth month. It pays CHF 215 through the 12th birthday month, then CHF 268 through the 16th birthday month. The model holds these nominal rates fixed. Zurich has no lump-sum birth allowance. [Zurich rates](https://www.zh.ch/de/soziales/sozialhilfe/sozialhilfehandbuch/flexdata-definition/11-weitere-leistungen-soziale-sicherheit/11-1-sozialversicherungsleistungen/11-1-13-ueberblick-ueber-die-familienzulagen.html) · [Federal entitlement rules](https://www.bsv.admin.ch/de/familienzulagen-leistungen-und-voraussetzungen) · [Federal cantonal comparison](https://www.bsv.admin.ch/de/zulagen-fuer-familien)
+- The engine places birth leave (98 calendar days) and other-parent leave (14 daily allowances) consecutively from the first day of the birth month for each parent. It replaces the fraction of that month's salary corresponding to the actual calendar days on leave with the daily benefit. The benefit is 80% of projected usual monthly net salary in the birth month divided by 30, capped at CHF 220 per day. Net salary proxies for the statutory earnings base. Where leave overlaps a career break, the benefit replaces that period's planned salary. Each parent receives at most one benefit per day for overlapping child scenarios. Longer breaks use the career-break lever. [AHV/EO maternity allowance](https://www.ahv-iv.ch/p/6.02.e) · [AHV/EO other-parent allowance](https://www.ahv-iv.ch/p/6.04.e)
+- The monthly net child cost is everyday spending plus Kita spending less the child allowance. The cash projection also includes any change in earnings during parental leave. The **Parental leave income** driver shows the reduction in earnings attributable to leave.
+
 ## 3. Constraints and goals
 
 | Constraint | Type | Rule |
@@ -82,6 +90,7 @@ Listed in-app (`···` → *Assumptions & sources*) and in `app/backend/converg
 
 - Synthetic data only. It is not representative of the Swiss population, and the relationship between the two profiles is assumed.
 - The optional extra deduction is a flat percentage of net pay. The model omits tax lag, wealth tax, pillar 2/3a and the tax effects of marriage or home ownership.
+- Child scenarios assume eligibility for the modeled benefits. They omit employment top-ups, child tax deductions, Zurich income- and wealth-based subsidies, school-age care, education costs and allowances, larger housing costs, and automatic safety-buffer increases. Users can change rent and safety buffers through their normal plan controls.
 - Deterministic single path, with no Monte Carlo. Sensitivity is explored through stress tests.
 - Investment portfolios are a single snapshot with a constant assumed return, and are never sold to fund a deposit.
 - The affordability check gives an indication using combined usual net income. A lender makes its own assessment using gross income.

@@ -2,6 +2,7 @@
 import pytest
 
 from converge.engine.changes import apply_changes
+from converge.engine.evaluate import evaluate
 from converge.engine.simulate import simulate
 from converge.models import Change
 
@@ -161,3 +162,84 @@ def test_overlapping_career_breaks_rejected(simple_plan):
            dict(id="b", start="2027-09", months=3, income_pct=0, one_off_cost_chf=0)]
     with pytest.raises(ChangeError):
         apply_changes(simple_plan, [C("people.B.career_breaks", brk)])
+
+
+def child_change(*, birth="2027-01", **updates):
+    data = dict(id="child-1", birth=birth, allowance_recipient="B",
+                leave={"birth_parent": "A", "other_parent": "B"})
+    return C("shared.children", [{**data, **updates}])
+
+
+def test_child_costs_cancel_transfers_and_raise_outgoings(simple_plan):
+    plan = apply_changes(simple_plan, [child_change()])
+    res = simulate(plan)
+    base = simulate(simple_plan)
+    a, b = res.people
+    ev = evaluate(plan, res)
+    assert res.checks["ok"]
+    assert res.joint_in == pytest.approx(res.joint_out)
+    assert res.joint_balance == pytest.approx([0] * len(res.months))
+    assert a.spending == base.people[0].spending  # no cohabitation implied
+    assert res.joint_in[0] == pytest.approx(700)
+    assert res.joint_in[4] == pytest.approx(700 + 2 * 4.2 * 138)
+    assert a.outgoings[4] - base.people[0].outgoings[4] == pytest.approx(res.joint_in[4] / 2)
+    assert all(v == 0 for v in a.family_allowance)
+    assert b.family_allowance[0] == b.family_allowance[4] == 215
+    assert b.income[4] - base.people[1].income[4] == 215
+    assert ev["children"][0]["costs"][4]["net_cost"] == pytest.approx(1644.20)
+    assert ev["children"][0]["costs"][18]["childcare"] == pytest.approx(2 * 4.2 * 120)
+    assert {"month": "2027-01", "kind": "child_birth", "label": "Child born", "person": None} in ev["events"]
+
+
+def test_parental_leave_prorates_months_and_caps_daily_pay(simple_plan):
+    plan = apply_changes(simple_plan, [C("people.A.income_monthly", 10_000), child_change(birth="2028-02")])
+    res = simulate(plan)
+    a, b = res.people
+    feb = res.months.index("2028-02")
+    assert a.income[feb:feb + 3] == pytest.approx([29 * 220, 31 * 220, 30 * 220])
+    assert a.income[feb + 3] == pytest.approx(10_000 * 23 / 31 + 8 * 220)
+    assert a.income[feb + 4] == 10_000
+    assert b.income[feb] == pytest.approx(6000 * 15 / 29 + 14 * 160 + 215)
+    assert b.income[feb + 1] == 6000 + 215
+
+
+def test_zero_childcare_and_birth_after_horizon(simple_plan):
+    plan = apply_changes(simple_plan, [child_change(childcare_days_per_week=0)])
+    res = simulate(plan)
+    assert all(cost.childcare == 0 for cost in res.child_costs["child-1"])
+    assert res.joint_in[4] == 700
+    later = apply_changes(simple_plan, [child_change(birth="2040-01")])
+    ev = evaluate(later)
+    base = evaluate(simple_plan)
+    assert ev["series"] == base["series"] and ev["events"] == base["events"]
+    assert all(cost["net_cost"] == 0 for cost in ev["children"][0]["costs"])
+
+
+def test_childcare_stops_at_four_and_allowance_steps_after_birthday_month(simple_plan):
+    childcare = simulate(apply_changes(simple_plan, [child_change(birth="2023-02")])).child_costs["child-1"]
+    assert childcare[0].childcare == pytest.approx(2 * 4.2 * 120)
+    assert childcare[1].childcare == 0
+    allowance = simulate(apply_changes(simple_plan, [child_change(birth="2015-02")])).people[1].family_allowance
+    assert allowance[:3] == [215, 215, 268]
+
+
+def test_child_drivers_distinguish_leave_and_care(simple_plan):
+    plan = apply_changes(simple_plan, [
+        C("people.B.emergency_floor", 40_000),
+        child_change(childcare_start_months_after_birth=0, everyday_cost_monthly=5000, childcare_days_per_week=5),
+    ])
+    issue = next(i for i in evaluate(plan)["issues"] if i["id"] == "floor:B")
+    labels = {driver["label"] for driver in issue["drivers"]}
+    assert {"Childcare", "Everyday child costs", "Parental leave income"} <= labels
+    assert "Income lost during career break" not in labels
+
+
+def test_twins_share_leave_days_but_each_receive_an_allowance(simple_plan):
+    change = child_change()
+    one = simulate(apply_changes(simple_plan, [change]))
+    twin = {**change.value[0], "id": "child-2"}
+    both = simulate(apply_changes(simple_plan, [C("shared.children", [*change.value, twin])]))
+    assert both.people[0].income == one.people[0].income
+    assert both.people[1].family_allowance[0] == 2 * one.people[1].family_allowance[0]
+    assert both.people[1].income[0] - one.people[1].income[0] == 215
+    assert both.joint_in[4] == pytest.approx(2 * one.joint_in[4])

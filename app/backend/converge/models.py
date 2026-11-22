@@ -21,6 +21,15 @@ def _check_month(v: str) -> str:
 
 
 Month = Annotated[str, AfterValidator(_check_month)]
+CHILD_EVERYDAY_DEFAULT = 700.0
+KITA_INFANT_TARIFF = 138.0
+KITA_OLDER_TARIFF = 120.0
+CHILD_ALLOWANCE_BASE = 215.0
+CHILD_ALLOWANCE_OLDER = 268.0
+BIRTH_LEAVE_DAYS = 98
+OTHER_PARENT_LEAVE_DAYS = 14
+LEAVE_REPLACEMENT = 0.8
+LEAVE_DAILY_CAP = 220.0
 
 
 class Model(BaseModel):
@@ -143,10 +152,29 @@ class Property(Model):
     target_date: Month = "2028-06"
 
 
+class ParentalLeave(Model):
+    birth_parent: str
+    other_parent: str
+
+
+class Child(Model):
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
+    label: str = Field("Child", min_length=1, max_length=80)
+    birth: Month
+    everyday_cost_monthly: float = Field(CHILD_EVERYDAY_DEFAULT, ge=0, allow_inf_nan=False)
+    childcare_days_per_week: float = Field(2, ge=0, le=5)
+    childcare_day_tariff: float | None = Field(None, ge=0, allow_inf_nan=False, description="Override the Zurich age-based tariff")
+    childcare_start_months_after_birth: int = Field(4, ge=0, le=48)
+    childcare_until_age: int = Field(4, ge=0, le=4)
+    allowance_recipient: str
+    leave: ParentalLeave
+
+
 class Shared(Model):
     household: Household = Household()
     split: Split = Split()
     property: Property = Property()
+    children: list[Child] = Field(default_factory=list, max_length=3)
 
 
 class Assumptions(Model):
@@ -171,8 +199,16 @@ class Plan(Model):
 
     @model_validator(mode="after")
     def _distinct(self) -> "Plan":
-        if self.people[0].id == self.people[1].id:
+        partner_ids = {p.id for p in self.people}
+        if len(partner_ids) != 2:
             raise ValueError("partners must be two distinct profiles")
+        if len({child.id for child in self.shared.children}) != len(self.shared.children):
+            raise ValueError("child ids must be unique")
+        for child in self.shared.children:
+            if child.allowance_recipient not in partner_ids:
+                raise ValueError("child allowance recipient must be a partner")
+            if {child.leave.birth_parent, child.leave.other_parent} != partner_ids:
+                raise ValueError("leave must name two distinct partners")
         return self
 
     def person(self, pid: str) -> Person:

@@ -58,9 +58,30 @@ export interface Stress {
   investment_return?: number;
 }
 
+export interface Child {
+  id: string;
+  label: string;
+  birth: Month;
+  everyday_cost_monthly: number;
+  childcare_days_per_week: number;
+  childcare_day_tariff: number | null;
+  childcare_start_months_after_birth: number;
+  childcare_until_age: number;
+  allowance_recipient: string;
+  leave: { birth_parent: string; other_parent: string };
+}
+
+export interface ChildCost {
+  everyday: number;
+  childcare: number;
+  allowance: number;
+  net_cost: number;
+}
+
 export interface Plan {
   people: [Person, Person];
   shared: {
+    children: Child[];
     household: { enabled: boolean; move_in: Month; rent: number; utilities: number; groceries: number; moving_cost: number };
     split: { mode: "equal" | "income" | "custom"; custom_share_first: number; adjust_for_breaks: boolean };
     property: {
@@ -198,14 +219,14 @@ export interface PropertyResult {
 
 export interface PlanEvent {
   month: Month;
-  kind: "move_in" | "purchase" | "career_break";
+  kind: "move_in" | "purchase" | "career_break" | "child_birth";
   label: string;
   person: string | null;
   end?: Month;
 }
 
 export type SeriesKey =
-  | "cash" | "investments" | "net_worth" | "income" | "tax" | "spending" | "household"
+  | "cash" | "investments" | "net_worth" | "income" | "family_allowance" | "tax" | "spending" | "household"
   | "housing" | "amortization" | "one_off" | "deposit" | "net_flow" | "property_value" | "mortgage";
 
 export interface Evaluation {
@@ -214,6 +235,7 @@ export interface Evaluation {
   people: [PersonResult, PersonResult];
   issues: Issue[];
   property: PropertyResult | null;
+  children: { id: string; label: string; birth: Month; costs: ChildCost[] }[];
   events: PlanEvent[];
   household: { cash: number[]; net_worth: number[]; property_value: number[]; mortgage: number[]; joint_transfers: number[]; share_first: number[] };
   series: Record<string, Record<SeriesKey, number[]>>;
@@ -319,6 +341,7 @@ export interface Workspace {
   versions: VersionInfo[];
   proposals: Proposal[];
   llm_available: boolean;
+  child_defaults: { child: Child; first_day_tariff: number };
 }
 
 export interface AssumptionRow {

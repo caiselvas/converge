@@ -2,6 +2,12 @@
 
 Branch `cai`. Last code commit: **`31ec27d`** (single-screen UI redesign). The earlier MVP snapshot is `53f778b`. Shared agent instructions are in `AGENTS.md`; project context is in `.agents/PROJECT.md`.
 
+## Navigation and child
+
+- Overview (`/`), Goals (`/goals`) and Expenses (`/expenses`) share the URL-backed scope, draft, viewer and Ask panel. The two editor pages show a live outcome strip.
+- **Have a child** opens the Together Goals editor. Child changes use the shared `shared.children` lever and require both approvals. Together Expenses shows the engine’s monthly child costs alongside joint contributions.
+- Child costs, allowance, parental leave and the **Child born** event come from the engine. The standalone child replay in `scripts/demo_check.py` follows the main demo and uses the assumptions documented in `docs/model.md`.
+
 ## 1. Product and UX decisions
 
 Converge is a financial planner for couples: **two personal financial twins and one shared plan**. A plan can be fine for the household and still risky for one partner, so every result is shown per partner and constraints are personal.

@@ -60,9 +60,11 @@ def _drivers(res: SimResult, pi: int, upto: int) -> list[dict]:
     for (t, lbl, amt) in s.one_off_items:
         if t <= upto:
             out[lbl] = out.get(lbl, 0.0) + amt
-    lost = sum(max(0.0, s.usual_income[t] - s.income[t]) for t in range(upto + 1))
-    if lost > 1:
-        out["Income lost during career break"] = lost * (1 - res.plan.assumptions.tax_rate)
+    retained = 1 - res.plan.assumptions.tax_rate
+    out["Income lost during career break"] = sum(s.career_break_loss[:upto + 1]) * retained
+    out["Parental leave income"] = sum(s.parental_leave_loss[:upto + 1]) * retained
+    out["Everyday child costs"] = sum(s.everyday_child_costs[:upto + 1])
+    out["Childcare"] = sum(s.childcare[:upto + 1])
     housing = sum(s.housing[t] for t in range(upto + 1))
     if housing > 1:
         out["Mortgage interest & maintenance"] = housing
@@ -253,6 +255,18 @@ def evaluate(plan: Plan, res: SimResult | None = None) -> dict:
         for b in p.career_breaks:
             events.append(dict(month=b.start, kind="career_break", label=f"{p.name}: {b.label} ({b.months} mo)",
                                person=p.id, end=M.add(b.start, b.months)))
+    children = []
+    for child in plan.shared.children:
+        if child.birth in res.months:
+            events.append(dict(month=child.birth, kind="child_birth", label="Child born", person=None))
+        children.append(dict(
+            id=child.id,
+            label=child.label,
+            birth=child.birth,
+            costs=[dict(everyday=round(cost.everyday, 2), childcare=round(cost.childcare, 2),
+                        allowance=round(cost.allowance, 2), net_cost=round(cost.everyday + cost.childcare - cost.allowance, 2))
+                   for cost in res.child_costs[child.id]],
+        ))
     events.sort(key=lambda e: e["month"])
 
     shares = res.people[0].household_share
@@ -262,6 +276,7 @@ def evaluate(plan: Plan, res: SimResult | None = None) -> dict:
         people=people_out,
         issues=hard + soft,
         property=property_out,
+        children=children,
         events=events,
         household=dict(
             cash=[round(res.people[0].cash[t] + res.people[1].cash[t], 2) for t in range(H)],
@@ -274,7 +289,7 @@ def evaluate(plan: Plan, res: SimResult | None = None) -> dict:
         series={
             p.id: {
                 k: [round(x, 2) for x in getattr(s, k)]
-                for k in ("cash", "investments", "net_worth", "income", "tax", "spending", "household",
+                for k in ("cash", "investments", "net_worth", "income", "family_allowance", "tax", "spending", "household",
                           "housing", "amortization", "one_off", "deposit", "net_flow", "property_value", "mortgage")
             }
             for p, s in zip(plan.people, res.people)
