@@ -2,6 +2,8 @@
 @import "tw-animate-css";
 @import "@fontsource-variable/geist";
 
+@custom-variant dark (&:is(.dark *));
+
 @theme inline {
   --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
   --font-heading: var(--font-sans);
@@ -21,9 +23,10 @@
   --color-accent-foreground: var(--foreground);
   --color-destructive: var(--negative);
   --color-border: var(--border);
-  --color-input: var(--border);
+  --color-input: var(--input);
   --color-ring: var(--brand);
   --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
   --color-brand-soft: var(--brand-soft);
   --color-negative: var(--negative);
   --color-negative-soft: var(--negative-soft);
@@ -35,25 +38,61 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --text-xs: 0.8rem;
   --text-xs--line-height: 1.15rem;
-  --shadow-panel: 0 1px 2px oklch(0.25 0.02 70 / 0.04), 0 6px 20px -8px oklch(0.25 0.02 70 / 0.08);
-  --shadow-pop: 0 2px 4px oklch(0.25 0.02 70 / 0.05), 0 14px 32px -8px oklch(0.25 0.02 70 / 0.16);
+  --shadow-panel: 0 1px 2px oklch(var(--shade) / var(--shadow-a)), 0 6px 20px -8px oklch(var(--shade) / var(--shadow-b));
+  --shadow-pop: 0 2px 4px oklch(var(--shade) / var(--shadow-a)), 0 14px 32px -8px oklch(var(--shade) / var(--shadow-c));
 }
 
 :root {
-  --background: oklch(0.982 0.006 88);
-  --card: oklch(0.996 0.003 88);
-  --foreground: oklch(0.21 0.015 70);
-  --ink-2: oklch(0.38 0.02 70);
-  --muted: oklch(0.953 0.008 88);
-  --muted-foreground: oklch(0.5 0.014 75);
-  --border: oklch(0.915 0.008 85);
-  --primary: oklch(0.23 0.015 70);
-  --primary-foreground: oklch(0.985 0.004 88);
-  --brand: oklch(0.46 0.085 185);
-  --brand-soft: oklch(0.95 0.028 185);
-  --negative: oklch(0.52 0.16 28);
-  --negative-soft: oklch(0.96 0.025 28);
+  color-scheme: light;
+  --background: oklch(0.978 0.007 95);
+  --card: oklch(0.997 0.003 95);
+  --foreground: oklch(0.2 0.018 200);
+  --ink-2: oklch(0.38 0.02 200);
+  --muted: oklch(0.95 0.009 95);
+  --muted-foreground: oklch(0.5 0.016 195);
+  --border: oklch(0.91 0.009 95);
+  --input: oklch(0.89 0.009 95);
+  --primary: oklch(0.22 0.018 200);
+  --primary-foreground: oklch(0.985 0.004 95);
+  --brand: oklch(0.45 0.09 188);
+  --brand-foreground: oklch(0.99 0.004 95);
+  --brand-soft: oklch(0.94 0.03 188);
+  --negative: oklch(0.53 0.16 27);
+  --negative-soft: oklch(0.955 0.03 27);
+  --wash: oklch(0.93 0.04 188 / 0.55);
+  --shade: 0.25 0.02 200;
+  --shadow-a: 0.04;
+  --shadow-b: 0.08;
+  --shadow-c: 0.16;
+  --scroll: oklch(0.85 0.01 90);
   --radius: 0.625rem;
+}
+
+/* Dark is designed, not inverted: a deep petrol-ink ground, surfaces lifted by lightness
+   rather than shadow, a luminous mint brand, and a softened coral for negatives. */
+.dark {
+  color-scheme: dark;
+  --background: oklch(0.165 0.012 215);
+  --card: oklch(0.205 0.013 215);
+  --foreground: oklch(0.955 0.006 190);
+  --ink-2: oklch(0.82 0.012 195);
+  --muted: oklch(0.255 0.014 215);
+  --muted-foreground: oklch(0.69 0.016 205);
+  --border: oklch(1 0 0 / 0.09);
+  --input: oklch(1 0 0 / 0.14);
+  --primary: oklch(0.955 0.006 190);
+  --primary-foreground: oklch(0.2 0.014 215);
+  --brand: oklch(0.8 0.115 178);
+  --brand-foreground: oklch(0.2 0.03 200);
+  --brand-soft: oklch(0.3 0.045 190);
+  --negative: oklch(0.74 0.15 28);
+  --negative-soft: oklch(0.3 0.055 28);
+  --wash: oklch(0.4 0.07 190 / 0.35);
+  --shade: 0 0 0;
+  --shadow-a: 0.25;
+  --shadow-b: 0.3;
+  --shadow-c: 0.5;
+  --scroll: oklch(0.38 0.015 215);
 }
 
 @layer base {
@@ -62,7 +101,7 @@
   body { @apply bg-background text-foreground; font-feature-settings: "cv11", "ss01"; }
   ::selection { background: var(--brand-soft); color: var(--foreground); }
   :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
-  * { scrollbar-width: thin; scrollbar-color: oklch(0.85 0.01 80) transparent; }
+  * { scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
   input[type="date"] { font-variant-numeric: tabular-nums; }
   button, [role="button"] { cursor: pointer; }
 }
@@ -70,9 +109,18 @@
 @utility tnum { font-variant-numeric: tabular-nums; }
 @utility panel { @apply rounded-xl border bg-card shadow-panel; }
 @utility press { transition-property: color, background-color, transform; transition-duration: 150ms; &:active { transform: scale(0.98); } }
+/* One quiet brand moment: a faint teal wash behind the hero balance. */
+@utility hero { background-image: radial-gradient(60rem 18rem at 0% -10%, var(--wash), transparent 70%); }
 @utility label { @apply text-xs font-medium text-muted-foreground; }
 
 @keyframes pulse { 50% { opacity: 0.55; } }
 .skeleton { background: var(--muted); animation: pulse 1.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.5; }
+
+/* Theme switch: colours cross-fade briefly; layout and transforms are untouched. */
+html.theme-switch, html.theme-switch *, html.theme-switch *::before, html.theme-switch *::after {
+  transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease, fill 200ms ease, stroke 200ms ease !important;
+}
+.dark input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+@media (prefers-reduced-motion: reduce) { html.theme-switch, html.theme-switch * { transition: none !important; } }

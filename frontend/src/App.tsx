@@ -1,5 +1,5 @@
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
-import { ArrowLeftRight, ChevronsUpDown, Compass, House, Info, Wallet, type LucideIcon } from 'lucide-react'
+import { ArrowLeftRight, ChevronsUpDown, Compass, House, Info, Moon, Sun, Wallet, type LucideIcon } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { Fields, ease } from '@/components/kit'
@@ -19,6 +19,33 @@ const views = [
 ] as const
 export type View = (typeof views)[number]['id']
 export type Preset = { category?: string; period?: string; type?: 'income' | 'expense' } | null
+
+function useTheme() {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
+  const toggle = () => {
+    const root = document.documentElement
+    root.classList.add('theme-switch')
+    const next = !root.classList.contains('dark')
+    root.classList.toggle('dark', next)
+    setDark(next)
+    try { localStorage.setItem('theme', next ? 'dark' : 'light') } catch { /* preference simply isn't remembered */ }
+    window.setTimeout(() => root.classList.remove('theme-switch'), 260)
+  }
+  return [dark, toggle] as const
+}
+
+function ThemeToggle({ dark, toggle, className }: { dark: boolean; toggle: () => void; className?: string }) {
+  return (
+    <button onClick={toggle} aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'} title={dark ? 'Light theme' : 'Dark theme'}
+      className={cn('press relative grid size-9 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground', className)}>
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.span key={dark ? 'moon' : 'sun'} initial={{ opacity: 0, rotate: -60, scale: 0.6 }} animate={{ opacity: 1, rotate: 0, scale: 1 }} exit={{ opacity: 0, rotate: 60, scale: 0.6 }} transition={{ duration: 0.16, ease }} className="grid">
+          {dark ? <Moon className="size-[18px]" strokeWidth={1.75} /> : <Sun className="size-[18px]" strokeWidth={1.75} />}
+        </motion.span>
+      </AnimatePresence>
+    </button>
+  )
+}
 
 const initial = (name: string) => name.slice(0, 1).toUpperCase()
 
@@ -43,7 +70,7 @@ function Selector({ index, current, profile, onSelect }: { index: IndexEntry[]; 
   }, [index, q])
   return (
     <Popover open={open} onOpenChange={o => { setOpen(o); if (!o) { setQ(''); setInfo(false) } }}>
-      <PopoverTrigger aria-label="Switch profile" className="flex w-full items-center gap-3 rounded-xl border bg-card p-2 pr-3 text-left shadow-panel transition-colors hover:bg-muted/60 data-popup-open:bg-muted/60">
+      <PopoverTrigger aria-label="Switch profile" className="flex w-full items-center gap-3 rounded-xl border bg-card p-2 pr-3 text-left shadow-panel transition-[background-color,transform] hover:bg-muted/60 active:scale-[0.99] data-popup-open:bg-muted/60">
         <Avatar name={current?.display_name ?? '·'} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold leading-tight">{current?.display_name ?? 'Loading…'}</span>
@@ -92,9 +119,11 @@ function Selector({ index, current, profile, onSelect }: { index: IndexEntry[]; 
 
 function Mark() {
   return (
-    <svg viewBox="0 0 20 20" className="size-5 text-brand" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M2.5 3.5 10 10l7.5 0M2.5 16.5 10 10" />
-    </svg>
+    <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-brand text-brand-foreground shadow-panel" aria-hidden>
+      <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M2.5 3.5 10 10l7.5 0M2.5 16.5 10 10" />
+      </svg>
+    </span>
   )
 }
 
@@ -105,7 +134,7 @@ function Nav({ view, onChange, className, itemClass, id }: { view: View; onChang
         <button key={v} onClick={() => onChange(v)} aria-current={view === v ? 'page' : undefined}
           className={cn('relative isolate flex items-center rounded-lg text-sm font-medium transition-colors', itemClass, view === v ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')}>
           {view === v && <motion.span layoutId={id} transition={{ duration: 0.35, ease }} className="absolute inset-0 -z-10 rounded-lg bg-muted" />}
-          <Icon className="size-[18px] shrink-0" strokeWidth={view === v ? 2 : 1.75} />
+          <Icon className={cn('size-[18px] shrink-0 transition-colors', view === v && 'text-brand')} strokeWidth={view === v ? 2 : 1.75} />
           <span>{label}</span>
         </button>
       ))}
@@ -122,6 +151,7 @@ export default function App() {
   const [view, setView] = useState<View>('home')
   const [scenarioId, setScenarioId] = useState<string | null>(null)
   const [preset, setPreset] = useState<Preset>(null)
+  const [dark, toggleTheme] = useTheme()
 
   useEffect(() => { loadIndex().then(setIndex); loadScenarios().then(setScenarios) }, [])
   useEffect(() => {
@@ -145,13 +175,14 @@ export default function App() {
           <div className="flex items-center gap-2 px-2 pt-1"><Mark /><span className="text-[1.05rem] font-semibold tracking-tight">Converge</span></div>
           {selector}
           <Nav view={view} onChange={go} id="nav-desktop" className="flex flex-col gap-0.5" itemClass="h-9 gap-3 px-3" />
-          <p className="mt-auto px-2 text-xs leading-relaxed text-muted-foreground">
-            Synthetic data from the LauzHack 2026 UBS AI Financial Twin challenge.
-          </p>
+          <div className="mt-auto flex items-end gap-2 px-2">
+            <p className="flex-1 text-xs leading-relaxed text-muted-foreground">Synthetic data from the LauzHack 2026 UBS AI Financial Twin challenge.</p>
+            <ThemeToggle dark={dark} toggle={toggleTheme} className="-mr-2" />
+          </div>
         </aside>
 
         <div className="sticky top-0 z-20 flex items-center gap-3 border-b bg-background px-4 py-2.5 lg:hidden">
-          <Mark /><div className="min-w-0 flex-1">{selector}</div>
+          <Mark /><div className="min-w-0 flex-1">{selector}</div><ThemeToggle dark={dark} toggle={toggleTheme} />
         </div>
 
         <main className="min-w-0 pb-24 lg:pb-12">

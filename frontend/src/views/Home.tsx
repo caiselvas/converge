@@ -80,7 +80,7 @@ export default function Home({ rec, months, openActivity, setView }: Props) {
   return (
     <Page className="gap-7">
       <h1 className="sr-only">{p.display_name}: home</h1>
-      <Panel className="p-5 sm:p-7">
+      <Panel className="hero p-5 sm:p-7">
         <div className="flex flex-col-reverse gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="label">Cash balance</p>

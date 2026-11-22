@@ -70,7 +70,7 @@ export default function Activity({ rec, preset }: { rec: Rec; preset: Preset }) 
           </div>
           <Button variant="outline" onClick={() => setOpen(!open)} aria-expanded={open} aria-label="Filters" className="press relative h-11 gap-2 bg-card px-3.5 shadow-panel">
             <SlidersHorizontal /><span className="hidden sm:inline">Filters</span>
-            {filters > 0 && <span className="grid size-5 place-items-center rounded-full bg-brand text-[0.7rem] font-semibold text-white">{filters}</span>}
+            {filters > 0 && <span className="grid size-5 place-items-center rounded-full bg-brand text-[0.7rem] font-semibold text-brand-foreground">{filters}</span>}
           </Button>
         </div>
 
