@@ -69,6 +69,7 @@
 
 @utility tnum { font-variant-numeric: tabular-nums; }
 @utility panel { @apply rounded-xl border bg-card shadow-panel; }
+@utility press { transition-property: color, background-color, transform; transition-duration: 150ms; &:active { transform: scale(0.98); } }
 @utility label { @apply text-xs font-medium text-muted-foreground; }
 
 @keyframes pulse { 50% { opacity: 0.55; } }

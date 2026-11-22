@@ -1,24 +1,24 @@
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
-import { ChevronsUpDown, LayoutDashboard, ListFilter, FlaskConical, UserRound, type LucideIcon } from 'lucide-react'
+import { ArrowLeftRight, ChevronsUpDown, Compass, House, Info, Wallet, type LucideIcon } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { ease } from '@/components/kit'
+import { Fields, ease } from '@/components/kit'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
-import { loadIndex, loadProfile, loadScenarios, monthsOf, words, type IndexEntry, type Rec, type Scenario } from '@/lib/data'
-import Overview from '@/views/Overview'
+import { chf, date, loadIndex, loadProfile, loadScenarios, monthsOf, words, type IndexEntry, type Profile, type Rec, type Scenario } from '@/lib/data'
+import Home from '@/views/Home'
 import Activity from '@/views/Activity'
-import Profile from '@/views/Profile'
-import Scenarios from '@/views/Scenarios'
+import Finances from '@/views/Finances'
+import Explore from '@/views/Explore'
 
 const views = [
-  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-  { id: 'activity', label: 'Activity', icon: ListFilter },
-  { id: 'profile', label: 'Financial Profile', icon: UserRound },
-  { id: 'scenarios', label: 'Scenarios', icon: FlaskConical },
+  { id: 'home', label: 'Home', icon: House },
+  { id: 'activity', label: 'Activity', icon: ArrowLeftRight },
+  { id: 'finances', label: 'Finances', icon: Wallet },
+  { id: 'explore', label: 'Explore', icon: Compass },
 ] as const
 export type View = (typeof views)[number]['id']
-export type Preset = { category?: string; period?: string } | null
+export type Preset = { category?: string; period?: string; type?: 'income' | 'expense' } | null
 
 const initial = (name: string) => name.slice(0, 1).toUpperCase()
 
@@ -26,15 +26,23 @@ function Avatar({ name, className }: { name: string; className?: string }) {
   return <span className={cn('grid size-9 shrink-0 place-items-center rounded-full bg-brand-soft text-sm font-semibold text-brand', className)}>{initial(name)}</span>
 }
 
-function Selector({ index, current, onSelect }: { index: IndexEntry[]; current?: IndexEntry; onSelect: (id: string) => void }) {
+const details = (p: Profile): [string, string][] => [
+  ['Profile ID', p.profile_id], ['Name', p.display_name], ['Age at start', `${p.age_at_start} years`], ['City', p.city], ['Canton', p.canton], ['Country', p.country],
+  ['Currency', p.currency], ['Employment', words(p.employment_status)], ['Household', words(p.household_type)], ['Opening cash', chf(p.opening_cash_chf, true)],
+  ['Reference monthly net income', chf(p.reference_monthly_net_income_chf, true)], ['Reference monthly rent', chf(p.reference_monthly_rent_chf, true)],
+  ['As of', date(p.as_of_date)], ['Synthetic', p.synthetic ? 'Yes, fictional profile' : 'No'],
+]
+
+function Selector({ index, current, profile, onSelect }: { index: IndexEntry[]; current?: IndexEntry; profile?: Profile; onSelect: (id: string) => void }) {
   const [open, setOpen] = useState(false)
+  const [info, setInfo] = useState(false)
   const [q, setQ] = useState('')
   const matches = useMemo(() => {
     const s = q.trim().toLowerCase()
     return s ? index.filter(p => `${p.display_name} ${p.profile_id} ${p.city} ${p.canton}`.toLowerCase().includes(s)) : index
   }, [index, q])
   return (
-    <Popover open={open} onOpenChange={o => { setOpen(o); if (!o) setQ('') }}>
+    <Popover open={open} onOpenChange={o => { setOpen(o); if (!o) { setQ(''); setInfo(false) } }}>
       <PopoverTrigger aria-label="Switch profile" className="flex w-full items-center gap-3 rounded-xl border bg-card p-2 pr-3 text-left shadow-panel transition-colors hover:bg-muted/60 data-popup-open:bg-muted/60">
         <Avatar name={current?.display_name ?? '·'} />
         <span className="min-w-0 flex-1">
@@ -44,6 +52,18 @@ function Selector({ index, current, onSelect }: { index: IndexEntry[]; current?:
         <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={8} className="w-[min(22rem,calc(100vw-2rem))] gap-0 p-0 shadow-pop">
+        {info && profile ? (
+          <div className="max-h-[min(34rem,calc(100dvh-7rem))] overflow-y-auto p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold">Profile details</p>
+              <button onClick={() => setInfo(false)} className="press text-xs font-medium text-brand hover:underline">Back to search</button>
+            </div>
+            <Fields rows={details(profile)} />
+            <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
+              Synthetic data from the LauzHack 2026 UBS challenge. Balances are month-end ledger closes, Jan 2025 – Dec 2026, not live. Assets and debt are snapshots at {date(profile.as_of_date)}.
+            </p>
+          </div>
+        ) : (
         <Command shouldFilter={false} className="p-1.5">
           <CommandInput value={q} onValueChange={setQ} placeholder="Search name, ID or city" />
           <CommandList className="mt-1 max-h-80">
@@ -59,10 +79,12 @@ function Selector({ index, current, onSelect }: { index: IndexEntry[]; current?:
               </CommandItem>
             ))}
           </CommandList>
-          <p className="border-t px-2.5 pt-2 pb-1 text-xs text-muted-foreground">
-            {matches.length > 50 ? `Showing 50 of ${matches.length} matches` : `${matches.length} of ${index.length} fictional profiles`}
-          </p>
+          <div className="flex items-center justify-between gap-3 border-t px-2.5 pt-2 pb-1 text-xs text-muted-foreground">
+            <span>{matches.length > 50 ? `Showing 50 of ${matches.length} matches` : `${matches.length} of ${index.length} fictional profiles`}</span>
+            {profile && <button onClick={() => setInfo(true)} className="press flex items-center gap-1 font-medium text-brand hover:underline"><Info className="size-3.5" />Profile details</button>}
+          </div>
         </Command>
+        )}
       </PopoverContent>
     </Popover>
   )
@@ -97,8 +119,8 @@ export default function App() {
   const [profileId, setProfileId] = useState('P00001')
   const [rec, setRec] = useState<Rec | null>(null)
   const [loading, setLoading] = useState(true)
-  const [view, setView] = useState<View>('overview')
-  const [scenarioId, setScenarioId] = useState('S001')
+  const [view, setView] = useState<View>('home')
+  const [scenarioId, setScenarioId] = useState<string | null>(null)
   const [preset, setPreset] = useState<Preset>(null)
 
   useEffect(() => { loadIndex().then(setIndex); loadScenarios().then(setScenarios) }, [])
@@ -110,11 +132,11 @@ export default function App() {
   }, [profileId])
 
   const months = useMemo(() => (rec ? monthsOf(rec) : []), [rec])
-  const go = (v: View) => { setPreset(null); setView(v) }
+  const go = (v: View) => { setPreset(null); if (v === 'explore') setScenarioId(null); setView(v) }
   const openActivity = (p: NonNullable<Preset>) => { setPreset(p); setView('activity') }
-  const openScenario = (id: string) => { setScenarioId(id); setView('scenarios') }
+  const openScenario = (id: string) => { setScenarioId(id); setView('explore') }
   const current = index.find(p => p.profile_id === profileId)
-  const selector = <Selector index={index} current={current} onSelect={setProfileId} />
+  const selector = <Selector index={index} current={current} profile={rec?.profile} onSelect={setProfileId} />
 
   return (
     <MotionConfig reducedMotion="user">
@@ -124,7 +146,7 @@ export default function App() {
           {selector}
           <Nav view={view} onChange={go} id="nav-desktop" className="flex flex-col gap-0.5" itemClass="h-9 gap-3 px-3" />
           <p className="mt-auto px-2 text-xs leading-relaxed text-muted-foreground">
-            Fictional profiles from the LauzHack 2026 UBS AI Financial Twin challenge. All data is synthetic.
+            Synthetic data from the LauzHack 2026 UBS AI Financial Twin challenge.
           </p>
         </aside>
 
@@ -137,18 +159,17 @@ export default function App() {
           <div className={cn('mx-auto w-full max-w-[72rem] px-4 pt-6 transition-opacity duration-200 sm:px-8 lg:pt-9', loading && rec && 'opacity-60 delay-150')}>
             {rec ? (
               <AnimatePresence mode="wait" initial={false}>
-                <motion.div key={`${view}-${profileId}`} exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
-                  {view === 'overview' && <Overview rec={rec} months={months} scenarios={scenarios} openActivity={openActivity} setView={go} openScenario={openScenario} />}
-                  {view === 'activity' && <Activity rec={rec} preset={preset} />}
-                  {view === 'profile' && <Profile rec={rec} months={months} scenarios={scenarios} openScenario={openScenario} />}
-                  {view === 'scenarios' && <Scenarios rec={rec} scenarios={scenarios} scenarioId={scenarioId} setScenarioId={setScenarioId} />}
+                <motion.div key={view} exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
+                  {view === 'home' && <Home rec={rec} months={months} openActivity={openActivity} setView={go} />}
+                  {view === 'activity' && <Activity key={profileId} rec={rec} preset={preset} />}
+                  {view === 'finances' && <Finances key={profileId} rec={rec} months={months} scenarios={scenarios} openScenario={openScenario} />}
+                  {view === 'explore' && <Explore key={profileId} rec={rec} scenarios={scenarios} scenarioId={scenarioId} setScenarioId={setScenarioId} />}
                 </motion.div>
               </AnimatePresence>
             ) : (
               <div className="flex flex-col gap-5" aria-busy>
-                <div className="skeleton h-12 w-72 rounded-lg" />
-                <div className="skeleton h-96 rounded-xl" />
-                <div className="grid gap-5 md:grid-cols-2"><div className="skeleton h-64 rounded-xl" /><div className="skeleton h-64 rounded-xl" /></div>
+                <div className="skeleton h-96 rounded-2xl" />
+                <div className="skeleton h-40 rounded-2xl" />
               </div>
             )}
           </div>

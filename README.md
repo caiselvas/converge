@@ -2,7 +2,7 @@
 
 AI-powered financial planning for couples, built for the UBS AI Financial Twin challenge at LauzHack 2026.
 
-**MVP 1** is a navigable dashboard over the challenge's synthetic data: pick any of the 1,200 fictional profiles and explore their overview, transactions, full financial profile and the 120 scenarios. There is no AI or simulation engine yet; the Scenarios view is the seam where one will plug in.
+**MVP 1** is a navigable dashboard over the challenge's synthetic data: pick any of the 1,200 fictional profiles and explore their cash balance (Home), transactions (Activity), accounts, assets and goals (Finances) and the 120 scenarios (Explore). There is no AI or simulation engine yet; Explore is the seam where one will plug in.
 
 ## Run it
 
@@ -42,7 +42,7 @@ frontend/src
   App.tsx                           shell, profile selector, navigation, data loading
   lib/data.ts                       types, loaders, formatting, the few derived calculations
   components/kit.tsx                panel, animated number, disclosure, shared primitives
-  views/{Overview,Activity,Profile,Scenarios}.tsx
+  views/{Home,Activity,Finances,Explore}.tsx
 ```
 
 Only the selected profile's JSON (about 90 KB) is loaded, never all 552,295 transactions. React, Vite, TypeScript, Tailwind CSS v4, shadcn/ui (`components/ui`), Motion, Recharts and Lucide; no backend, router or state library.
@@ -56,6 +56,8 @@ Every figure is derived from the records; nothing is hardcoded or generated.
 - Opening assets and debts are snapshots at 1 Jan 2025, shown as such. Opening net position is assets less debt. Cash is in both the account and asset records and is counted once.
 - Life events are proposed, not executed. Scenario assumptions are illustrative. Goals have no allocated funds, so no progress is shown.
 - Simulation results are labelled "Not yet available"; no projection is displayed.
+- The single Home insight comes from fixed rules on the selected period (balance below zero, spending above income, spending 25% above the previous three-month average, one category at 40% or more of spending); none is shown when no rule applies.
+- Personal details live in the profile selector ("Profile details").
 
 ## Current limitations
 

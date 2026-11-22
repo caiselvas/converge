@@ -1,49 +1,44 @@
-import { animate, AnimatePresence, motion, useMotionValue, useReducedMotion, useTransform, type Variants } from 'motion/react'
+import { animate, AnimatePresence, motion, useMotionValue, useReducedMotion, useTransform } from 'motion/react'
 import {
   Banknote, Bus, ChevronDown, GraduationCap, Gift, House, Pill, Plane, ShieldPlus, ShoppingBag, ShoppingBasket,
   Smartphone, TriangleAlert, Ticket, UtensilsCrossed, Zap, type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import { words } from '@/lib/data'
+import { chfSigned, words, type Tx } from '@/lib/data'
 
 export const ease = [0.16, 1, 0.3, 1] as const
 
-export const stagger: Variants = { show: { transition: { staggerChildren: 0.05 } } }
-export const rise: Variants = {
-  hidden: { opacity: 0, y: 10 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.45, ease } },
-}
-
 export function Page({ children, className }: { children: ReactNode; className?: string }) {
-  return <motion.div variants={stagger} initial="hidden" animate="show" className={cn('flex flex-col gap-5', className)}>{children}</motion.div>
-}
-
-export function Panel({ title, aside, children, className, pad = true, id }: {
-  title?: ReactNode; aside?: ReactNode; children: ReactNode; className?: string; pad?: boolean; id?: string
-}) {
   return (
-    <motion.section id={id} variants={rise} className={cn('panel min-w-0 scroll-mt-6', className)}>
-      {title && (
-        <header className="flex items-center justify-between gap-3 px-5 pt-4">
-          <h2 className="text-[0.95rem] font-semibold tracking-tight">{title}</h2>
-          {aside}
-        </header>
-      )}
-      <div className={cn(pad && 'p-5', title && pad && 'pt-4')}>{children}</div>
-    </motion.section>
+    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease }} className={cn('flex flex-col gap-8', className)}>
+      {children}
+    </motion.div>
   )
 }
 
-export function PageTitle({ title, sub, children }: { title: string; sub?: ReactNode; children?: ReactNode }) {
+export function PageTitle({ title, sub }: { title: string; sub?: ReactNode }) {
   return (
-    <motion.div variants={rise} className="flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 className="text-[1.65rem] leading-tight font-semibold tracking-[-0.025em]">{title}</h1>
-        {sub && <p className="mt-1 text-sm text-muted-foreground">{sub}</p>}
-      </div>
+    <div>
+      <h1 className="text-[1.65rem] leading-tight font-semibold tracking-[-0.025em]">{title}</h1>
+      {sub && <p className="mt-1 text-sm text-muted-foreground">{sub}</p>}
+    </div>
+  )
+}
+
+export function Panel({ children, className }: { children: ReactNode; className?: string }) {
+  return <section className={cn('panel min-w-0', className)}>{children}</section>
+}
+
+export function Section({ title, aside, children, className }: { title: ReactNode; aside?: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <section className={cn('min-w-0', className)}>
+      <header className="mb-2 flex items-baseline justify-between gap-3">
+        <h2 className="text-[0.95rem] font-semibold tracking-tight">{title}</h2>
+        {aside}
+      </header>
       {children}
-    </motion.div>
+    </section>
   )
 }
 
@@ -52,7 +47,7 @@ export function Num({ value, format }: { value: number; format: (n: number) => s
   const mv = useMotionValue(value)
   const text = useTransform(mv, format)
   useEffect(() => {
-    const c = animate(mv, value, { duration: reduce ? 0 : 0.7, ease })
+    const c = animate(mv, value, { duration: reduce ? 0 : 0.5, ease })
     return () => c.stop()
   }, [value, reduce, mv])
   return <motion.span className="tnum">{text}</motion.span>
@@ -70,7 +65,7 @@ export function Badge({ children, tone = 'neutral', className }: { children: Rea
 
 export function Empty({ icon: Icon, title, children }: { icon: LucideIcon; title: string; children?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed px-6 py-8 text-center">
+    <div className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed px-6 py-8 text-center">
       <Icon className="mb-1 size-5 text-muted-foreground" strokeWidth={1.5} />
       <p className="text-sm font-medium">{title}</p>
       {children && <p className="max-w-sm text-sm text-muted-foreground">{children}</p>}
@@ -78,18 +73,18 @@ export function Empty({ icon: Icon, title, children }: { icon: LucideIcon; title
   )
 }
 
-export function Disclosure({ summary, children, defaultOpen = false }: { summary: ReactNode; children: ReactNode; defaultOpen?: boolean }) {
+export function Disclosure({ summary, children, defaultOpen = false, className }: { summary: ReactNode; children: ReactNode; defaultOpen?: boolean; className?: string }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
     <div>
-      <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-3 rounded-lg text-left">
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className={cn('press flex w-full items-center gap-3 rounded-lg text-left hover:bg-muted/60', className)}>
         <div className="min-w-0 flex-1">{summary}</div>
-        <ChevronDown className={cn('size-4 shrink-0 text-muted-foreground transition-transform duration-300', open && 'rotate-180')} />
+        <ChevronDown className={cn('size-4 shrink-0 text-muted-foreground transition-transform duration-200', open && 'rotate-180')} />
       </button>
       <AnimatePresence initial={false}>
         {open && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.3, ease }} className="overflow-hidden">
+            transition={{ duration: 0.25, ease }} className="overflow-hidden">
             {children}
           </motion.div>
         )}
@@ -111,6 +106,24 @@ export function Fields({ rows }: { rows: [string, ReactNode][] }) {
   )
 }
 
+/** A label on the left, a figure on the right; used as the summary of rows. */
+export function Line({ title, sub, value, valueSub, tone }: { title: ReactNode; sub?: ReactNode; value?: ReactNode; valueSub?: ReactNode; tone?: string }) {
+  return (
+    <span className="flex items-center justify-between gap-4 py-2.5 text-left">
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-medium">{title}</span>
+        {sub && <span className="block text-xs text-muted-foreground">{sub}</span>}
+      </span>
+      {value && (
+        <span className="shrink-0 text-right">
+          <span className={cn('tnum block text-sm font-medium', tone)}>{value}</span>
+          {valueSub && <span className="block text-xs text-muted-foreground">{valueSub}</span>}
+        </span>
+      )}
+    </span>
+  )
+}
+
 const icons: Record<string, LucideIcon> = {
   groceries: ShoppingBasket, restaurants: UtensilsCrossed, retail: ShoppingBag, leisure: Ticket, pharmacy: Pill,
   housing_rent: House, health_insurance: ShieldPlus, utilities: Zap, transport: Bus, telecom: Smartphone,
@@ -120,8 +133,22 @@ export function CategoryIcon({ category, className }: { category: string; classN
   const Icon = icons[category] ?? Banknote
   const income = category === 'salary_or_support' || category === 'annual_bonus'
   return (
-    <span className={cn('grid size-8 shrink-0 place-items-center rounded-lg', income ? 'bg-brand-soft text-brand' : 'bg-muted text-ink-2', className)} title={words(category)}>
+    <span className={cn('grid size-9 shrink-0 place-items-center rounded-full', income ? 'bg-brand-soft text-brand' : 'bg-muted text-ink-2', className)} title={words(category)}>
       <Icon className="size-4" strokeWidth={1.75} />
+    </span>
+  )
+}
+
+export function TxRow({ t, when }: { t: Tx; when: string }) {
+  const [, , c, a, desc] = t
+  return (
+    <span className="flex items-center gap-3 py-2 text-left">
+      <CategoryIcon category={c} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{desc}</span>
+        <span className="block truncate text-xs text-muted-foreground">{when} · {words(c)}</span>
+      </span>
+      <span className={cn('tnum shrink-0 text-sm font-medium', a > 0 && 'text-brand')}>{chfSigned(a)}</span>
     </span>
   )
 }

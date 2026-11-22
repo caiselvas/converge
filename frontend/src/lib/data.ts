@@ -28,15 +28,15 @@ const chfFull = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 2, maxim
 const chfWhole = new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 })
 export const chf = (n: number, cents = false) => `${n < 0 ? '−' : ''}CHF ${(cents ? chfFull : chfWhole).format(Math.abs(n))}`
 export const chfSigned = (n: number, cents = true) => (n > 0 ? '+' : '') + chf(n, cents)
-const oneDecimal = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 })
-export const compact = (n: number) => (n < 0 ? '−' : '') + (Math.abs(n) >= 1000 ? `${oneDecimal.format(Math.abs(n) / 1000)}k` : chfWhole.format(Math.abs(n)))
 const dateFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+const dayFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
 const monthFmt = new Intl.DateTimeFormat('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' })
 const monthLong = new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 export const date = (d: string) => dateFmt.format(new Date(d))
+export const day = (d: string) => dayFmt.format(new Date(d))
 export const month = (m: string, long = false) => (long ? monthLong : monthFmt).format(new Date(`${m}-01`))
 export const monthShort = (m: string) => new Date(`${m}-01`).toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' }) + ` ’${m.slice(2, 4)}`
-export const words = (s: string) => s.replace(/_/g, ' ').replace(/chf/gi, 'CHF').replace(/^./, c => c.toUpperCase())
+export const words = (s: string) => s.replace(/_/g, ' ').replace(/chf/gi, 'CHF').replace(/^./, c => c.toUpperCase())
 export const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 export function niceTicks(min: number, max: number) {
   const raw = (max - min) / 4 || 1
