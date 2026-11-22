@@ -18,8 +18,8 @@ UBS synthetic Financial Twin challenge datasets.
 Local reference data: `external/ubs/`
 
 ## Architecture
-- `frontend/`: User interface
-- `backend/`: APIs, financial simulation, optimisation, AI
+- `app/frontend/`: User interface
+- `app/backend/`: APIs, financial simulation, optimisation, AI
 - `tests/`: Automated tests
 - `docs/`: Documentation
 - `.agents/`: Shared context for coding agents
