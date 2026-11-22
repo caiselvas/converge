@@ -60,3 +60,14 @@ def test_persistence(store, simple_plan, tmp_path):
     p = store.propose("A", "Home", [Change(path="shared.property.enabled", value=True)])
     again = Store(path=store.path, seed_factory=lambda: simple_plan)
     assert again.proposal(p.id).status == "pending"
+
+
+def test_owner_can_add_and_remove_goals(store):
+    goals = [dict(id="user-1", name="Sabbatical fund", target_chf=20_000, target_date="2029-06",
+                  priority="medium", measure="cash", source="user")]
+    p = store.propose("B", "New goal", [Change(path="people.B.goals", value=goals)])
+    assert p.status == "applied"
+    assert [g.name for g in store.plan.person("B").goals] == ["Sabbatical fund"]
+    assert "Sabbatical fund" in p.described[0]["value_text"]
+    p = store.propose("B", "Drop goal", [Change(path="people.B.goals", value=[])])
+    assert p.status == "applied" and store.plan.person("B").goals == []

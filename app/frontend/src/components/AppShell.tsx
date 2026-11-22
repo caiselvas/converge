@@ -5,22 +5,15 @@ import * as Popover from "@radix-ui/react-popover";
 import * as RTooltip from "@radix-ui/react-tooltip";
 import { AlertTriangle, BookOpen, CheckCircle2, Inbox as InboxIcon, Info, MoreHorizontal, RotateCcw, X } from "lucide-react";
 
-import { useStore, type Tab } from "@/lib/store";
+import { useStore } from "@/lib/store";
 import { Avatar, Button, clsx } from "./ui";
 import { DraftBar } from "./DraftBar";
 import { Inbox } from "./Inbox";
 import { Sources } from "./Sources";
-import { Overview } from "./views/Overview";
-import { Personal } from "./views/Personal";
-import { Together } from "./views/Together";
-import { Explore } from "./views/Explore";
-
-const TABS: { id: Tab; label: string }[] = [
-  { id: "overview", label: "Overview" },
-  { id: "personal", label: "Personal" },
-  { id: "together", label: "Together" },
-  { id: "explore", label: "Scenarios" },
-];
+import { ChecksBadge } from "./ChecksBadge";
+import { PersonSheet } from "./PersonSheet";
+import { PlanView } from "./Plan";
+import { SharedSheet } from "./SharedSheet";
 
 function Logo() {
   return (
@@ -39,7 +32,7 @@ function ViewerSwitch() {
   if (!ws) return null;
   return (
     <div className="flex items-center gap-2">
-      <span className="hidden text-[12px] text-muted md:inline">Viewing as</span>
+      <span className="hidden text-[12px] text-muted lg:inline">Viewing as</span>
       <div role="radiogroup" aria-label="Viewing as" className="inline-flex rounded-full bg-page p-0.5 ring-1 ring-line">
         {ws.people.map((p, i) => (
           <button
@@ -134,70 +127,54 @@ export function Drawer({ open, onOpenChange, title, children, width = 520 }: { o
 }
 
 export function AppShell() {
-  const { ws, loadError, tab, setTab, refresh, inboxOpen, setInboxOpen, sourcesOpen, setSourcesOpen, draft } = useStore();
-
+  const { ws, loadError, refresh, inboxOpen, setInboxOpen, sourcesOpen, setSourcesOpen, draft, sheet, sim } = useStore();
+  const withSheet = !!sheet;
   return (
     <RTooltip.Provider>
       <div className="min-h-screen">
-        <header className="sticky top-0 z-30 border-b border-line bg-white/90 backdrop-blur">
-          <div className="mx-auto flex h-14 max-w-[1240px] items-center justify-between gap-3 px-4 sm:px-6">
-            <div className="flex items-center gap-6">
-              <Logo />
-              <nav aria-label="Main" className="hidden items-center gap-1 md:flex">
-                {TABS.map((t) => (
-                  <button key={t.id} onClick={() => setTab(t.id)} aria-current={tab === t.id ? "page" : undefined}
-                    className={clsx("rounded-lg px-3 py-1.5 text-[13.5px] font-medium transition-colors", tab === t.id ? "bg-page text-ink" : "text-muted hover:text-ink")}>
-                    {t.label}
-                  </button>
-                ))}
-              </nav>
-            </div>
+        <header className="sticky top-0 z-30 border-b border-line bg-white/85 backdrop-blur">
+          <div className="mx-auto flex h-14 max-w-[1120px] items-center justify-between gap-3 px-4 sm:px-6">
+            <Logo />
             <div className="flex items-center gap-1 sm:gap-2">
               <InboxButton />
               <MoreMenu />
               <ViewerSwitch />
             </div>
           </div>
-          <nav aria-label="Main mobile" className="flex gap-1 overflow-x-auto border-t border-line px-3 py-1.5 md:hidden">
-            {TABS.map((t) => (
-              <button key={t.id} onClick={() => setTab(t.id)} aria-current={tab === t.id ? "page" : undefined}
-                className={clsx("shrink-0 rounded-lg px-3 py-1.5 text-[13px] font-medium", tab === t.id ? "bg-page text-ink" : "text-muted")}>
-                {t.label}
-              </button>
-            ))}
-          </nav>
         </header>
 
-        <main className={clsx("mx-auto max-w-[1240px] px-4 pt-6 sm:px-6", draft.length ? "pb-40" : "pb-16")}>
-          {loadError ? (
-            <div className="mx-auto mt-16 max-w-md rounded-2xl border border-line bg-white p-6 text-center">
-              <AlertTriangle className="mx-auto mb-3 text-warn" />
-              <h1 className="text-[16px] font-semibold">The planning engine is not reachable</h1>
-              <p className="mt-2 text-[13px] text-muted">{loadError}</p>
-              <p className="mt-2 text-[12.5px] text-muted">Start the backend with <code className="rounded bg-page px-1">make backend</code> (see README), then retry.</p>
-              <Button className="mt-4" onClick={() => refresh()}>Retry</Button>
-            </div>
-          ) : !ws ? (
-            <div className="mt-24 text-center text-[13px] text-muted pulse-soft">Loading your financial twins…</div>
-          ) : (
-            <>
-              {tab === "overview" && <Overview />}
-              {tab === "personal" && <Personal />}
-              {tab === "together" && <Together />}
-              {tab === "explore" && <Explore />}
-            </>
-          )}
-          <footer className="mt-14 border-t border-line pt-5 text-[11.5px] leading-5 text-subtle">
-            Converge is an educational prototype built on fictional UBS × LauzHack synthetic data. Projections are conditional on the stated
-            assumptions — they are not forecasts and not financial advice. Nina and Emil are unrelated synthetic profiles paired for this demonstration.
-          </footer>
-        </main>
-        {ws && <DraftBar />}
+        <div className={clsx("transition-[padding] duration-200", withSheet && "lg:pr-[440px]")}>
+          <main className={clsx("mx-auto max-w-[1120px] px-4 sm:px-6", draft.length ? "pb-36" : "pb-16")}>
+            {loadError ? (
+              <div className="mx-auto mt-24 max-w-md text-center">
+                <AlertTriangle className="mx-auto mb-3 text-warn" />
+                <h1 className="text-[17px] font-semibold">The planning engine is not reachable</h1>
+                <p className="mt-2 text-[13px] text-muted">{loadError}</p>
+                <p className="mt-1 text-[13px] text-muted">Start it with <code className="rounded bg-white px-1 ring-1 ring-line">make backend</code>, then retry.</p>
+                <Button className="mt-5" onClick={() => refresh()}>Retry</Button>
+              </div>
+            ) : !ws ? (
+              <div className="pulse-soft mt-32 text-center text-[13px] text-muted">Loading your financial twins…</div>
+            ) : (
+              <PlanView />
+            )}
+            <footer className="mt-16 flex flex-col gap-2 border-t border-line pt-5 text-[12px] text-subtle sm:flex-row sm:items-center sm:justify-between">
+              <span>Fictional UBS synthetic data · projections depend on assumptions · not financial advice</span>
+              <span className="flex items-center gap-4">
+                {sim && <ChecksBadge ev={sim.evaluation} />}
+                <button onClick={() => setSourcesOpen(true)} className="font-medium text-muted hover:text-ink">Assumptions & sources</button>
+              </span>
+            </footer>
+          </main>
+          {ws && <DraftBar />}
+        </div>
+        <PersonSheet />
+        <SharedSheet />
         <Toasts />
-        <Drawer open={inboxOpen} onOpenChange={setInboxOpen} title="Proposals" width={560}>
+        <Drawer open={inboxOpen} onOpenChange={setInboxOpen} title="Proposals" width={520}>
           <Inbox />
         </Drawer>
-        <Drawer open={sourcesOpen} onOpenChange={setSourcesOpen} title="Assumptions & sources" width={640}>
+        <Drawer open={sourcesOpen} onOpenChange={setSourcesOpen} title="Assumptions & sources" width={600}>
           <Sources />
         </Drawer>
       </div>

@@ -7,6 +7,7 @@ Built for the UBS **AI Financial Twin** challenge at LauzHack 2026.
 
 A household can afford a plan that is still personally risky for one partner. Converge keeps each partner's accounts, goals and safety buffer separate, links them through an explicit shared plan, and shows how every decision affects *each* person. When a plan breaks a constraint, a deterministic optimiser searches for realistic alternatives, re-simulates every one, and presents them as proposals both partners can preview, accept and approve.
 
+- **One screen** — a plain-language verdict ("Your plan works for both of you" / "Emil's savings fall below the safety buffer in Jun 2028"), one chart, decision buttons, and a Nina · Together · Emil row. Each card opens a side panel for editing while the chart stays visible and updates live.
 - **Personal twins** — initialised from UBS synthetic profiles, 24 months of transactions (read straight from the ZIP and reconciled to the cash-balance file), assets and goals.
 - **Couple workspace** — living together without double-counting rent, cost-sharing rules, a home purchase with deposit, mortgage, interest, maintenance and amortisation, and ownership that follows the deposit.
 - **Scenarios & recommendations** — life events and stress tests are simulated instantly. A bounded search over about 900 candidate adjustments finds verified fixes, and each one shows its impact on both partners, its trade-offs and a "why".
@@ -36,7 +37,7 @@ Open <http://localhost:3000>. The first start reads the transaction ZIP, which t
 ## Tests and checks
 
 ```bash
-make test     # 47 backend tests: data reconciliation, cash-flow identities, transfers, housing,
+make test     # 48 backend tests: data reconciliation, cash-flow identities, transfers, housing,
               # mortgage, career breaks, constraints, recommendation feasibility,
               # scenario isolation, approval workflow, API validation, AI grounding
 make lint     # TypeScript + ESLint
@@ -59,7 +60,7 @@ app/backend/          FastAPI + Pydantic, deterministic engine (no LLM in any ca
   converge/store.py   proposals, approvals, versions (JSON file in app/backend/.state/)
   converge/ai.py      Claude: NL -> validated changes; grounded summaries; offline fallback
   converge/assumptions.py   assumptions & sources registry
-app/frontend/         Next.js 16 + React 19 + Tailwind 4 + Recharts
+app/frontend/         Next.js 16 + React 19 + Tailwind 4 + Recharts (single-screen UI, see docs/HANDOFF.md)
 tests/backend/        pytest suite
 docs/                 model and demo documentation
 ```

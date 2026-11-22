@@ -1,36 +1,42 @@
 # Demo script (about 3 minutes)
 
-Start both servers (`make dev`) and open <http://localhost:3000>. Reset first: `···` → *Reset demo to UBS starting point*. All numbers below come from the engine at the time of writing. If you change defaults, they will differ, which is the point.
+Start both servers (`make dev`) and open <http://localhost:3000>. Reset first: `···` → *Reset demo to UBS starting point*. All numbers come from the engine. The ones quoted here are what it produced at the time of writing.
 
-**1. Two independent futures (30 s)** — *Overview, viewing as Nina*
+Everything happens on one screen. The parts are:
 
-- Two separate lines: Nina (CHF 287k cash) and Emil (CHF 157k), both loaded from UBS records P00918 and P00809. The status is *On track*, and "All accounting checks pass" sits top right.
-- *Personal* → Nina's spending categories are estimated from 24 months of transactions. Open "Where do these numbers come from?" to show the ledger reconciles to CHF 0.00 against the cash-balance file. Point out that tax is an explicit assumption because the ledger has none.
+- the headline (does the plan work?)
+- the decision buttons
+- one chart
+- the "Ways to make it work" cards
+- the **Nina · Together · Emil** row, where each card opens an editable side panel and the chart stays visible.
 
-**2. Connect their finances (30 s)** — *Scenarios*
+**1. Two independent futures (30 s)** — viewing as Nina
 
-- *Try a decision* → **Buy a home together → Add** (CHF 1.4M in Zurich, 25% deposit, April 2028, moving in April 2027).
-- Both lines drop at the purchase: the deposit becomes equity, not lost wealth (toggle *Net worth* on Overview to show this). The plan stays *On track*.
-- Optional: on *Together*, drag the deposit to 20%. The indicative affordability test fails, and the card shows the highest price that passes.
-- **Propose to Emil.** Switch the viewer to **Emil** → *Proposals* → review the impact → **Approve**. Version v1 is now the agreed plan.
+- The headline reads "Your plan works for both of you." The chart shows Nina's cash (CHF 287k) and Emil's (CHF 157k) on separate lines, loaded from UBS profiles P00918 and P00809.
+- Click **Nina**: her budget comes from 24 months of transactions. Open *Restaurants* and lower it — the chart and headline update live. Click **Discard** to undo. *About this data* (at the bottom of the panel) shows that the ledger reconciles to CHF 0.00.
 
-**3. Introduce a conflict (30 s)** — *Scenarios, as Emil*
+**2. Connect their finances (30 s)**
 
-- Career break: **Emil, January 2028, 6 months, 0% income, CHF 8,000 costs → Add Emil's break.**
-- The status flips to **Conflict**. Emil's cash falls about CHF 17k below his CHF 24k minimum in June 2028, shown as the red dot. Open **Why?**: home deposit, income paused, break costs.
-- Note the household as a whole is fine — Nina still has a cushion of about CHF 168k. This is exactly the conflict a pooled view would hide.
+- Click **Buy a home**. The shared panel opens with a CHF 1.4M home in Zurich, a 25% deposit, a purchase in April 2028 and moving in together in April 2027.
+- Point out the drop in both lines at the purchase: the deposit turns into equity (switch the chart to *Net worth*). The plan stays *On track*. Optional: drag the deposit to 20% → the affordability check fails and shows the highest price that would pass.
+- **Propose to Emil** → switch the viewer to **Emil** → **Proposals** → **Approve**.
+
+**3. Introduce a conflict (30 s)** — viewing as Emil
+
+- **Career break** → Emil, January 2028, 6 months, 0% income, CHF 8,000 costs → **Add**.
+- The headline changes to: *"Emil's savings fall below the safety buffer in Jun 2028."* He is CHF 17,183 short. Click **Why?** to see the drivers: home deposit, paused income, break costs. Nina still has about CHF 168k of cushion, which is exactly the conflict a pooled household view would hide.
 
 **4. Find alternatives (45 s)**
 
-- *Ways to make it work*: about 900 alternatives evaluated, three verified options that use different levers. For example: *Nina funds 55% of the deposit (and owns 55%)*, *Emil keeps 40% of income during the break*, or a combined option.
-- **Preview** one: the whole page recalculates and nothing is saved. Open *Why this works* to show what it resolves, its trade-offs and its assumptions.
-- **Accept** → the change is added to the draft, and the bar at the bottom shows the before/after for both partners.
+- *Ways to make it work*: 889 options simulated, and three verified options using different levers. For example: *Nina funds 55% of the deposit*, *Emil keeps 40% of income during the break*, and a combined option.
+- **Preview** → the whole screen recalculates without saving anything. Click **Why?** on a card to see its reasoning and trade-offs. **Accept** adds it to the draft.
 
 **5. Mutual decision (20 s)**
 
-- **Propose to Nina** (the shared change needs her). Switch to **Nina** → *Proposals* → review the impact → **Approve**. The Overview shows *On track*, with a "Tight, but feasible" note for Emil.
+- **Propose to Nina** → switch to **Nina** → **Proposals** → review the impact → **Approve**. The headline returns to "Your plan works for both of you", with Emil's tightest moment shown at CHF 1,356 above his buffer.
 
-**6. Stress test (25 s)** — *Scenarios, as Nina*
+**6. Stress test (25 s)** — viewing as Nina
 
-- Stress test → mortgage rate **1.8% → 4%**. The agreed plan breaks again: Emil is a few hundred francs short in June 2028. *Why?* now includes mortgage interest. The recommendations update immediately (for example, a slightly lower deposit or a later break).
-- Close with *Assumptions & sources*: every number is UBS data, a cited source, or a labelled assumption. Language AI only translates and explains; it never calculates.
+- **Stress test** → mortgage rate **1.8% → 4%**. The agreed plan breaks again: Emil is CHF 376 short in June 2028. *Why?* now includes mortgage interest, and new fixes appear straight away.
+- Optional: type *"What if the mortgage rate rises to 3.5%?"* into the input field. It turns into a structured, validated change (Claude when a key is configured, otherwise the built-in parser).
+- Close with **Assumptions & sources** in the footer: every number is UBS data, a cited source or a labelled assumption.

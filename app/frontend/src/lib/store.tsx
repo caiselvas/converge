@@ -6,7 +6,7 @@ import { api, ApiError } from "./api";
 import { applyChanges, mergeChanges, upsert } from "./plan";
 import type { Change, Plan, Proposal, RecResponse, SimResponse, Workspace } from "./types";
 
-export type Tab = "overview" | "personal" | "together" | "explore";
+export type Sheet = { kind: "person"; id: string } | { kind: "shared" } | null;
 
 interface Toast {
   id: number;
@@ -25,10 +25,8 @@ interface Ctx {
   loadError: string | null;
   viewer: string;
   setViewer: (id: string) => void;
-  tab: Tab;
-  setTab: (t: Tab) => void;
-  personalFocus: string | null;
-  setPersonalFocus: (id: string | null) => void;
+  sheet: Sheet;
+  openSheet: (s: Sheet) => void;
   /** The agreed plan (both partners). */
   plan: Plan | null;
   /** Agreed plan with the viewer's draft changes applied locally (instant). */
@@ -87,8 +85,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [ws, setWs] = useState<Workspace | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [viewer, setViewerState] = useState<string>("");
-  const [tab, setTabState] = useState<Tab>("overview");
-  const [personalFocus, setPersonalFocus] = useState<string | null>(null);
+  const [sheet, openSheet] = useState<Sheet>(null);
   const [drafts, setDrafts] = useState<Record<string, Change[]>>({});
   const [sim, setSim] = useState<SimResponse | null>(null);
   const [simError, setSimError] = useState<string | null>(null);
@@ -126,8 +123,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setDrafts(readLS("converge.drafts", {}));
       const v = readLS<string>("converge.viewer", "");
       if (v) setViewerState(v);
-      const h = window.location.hash.replace("#", "") as Tab;
-      if (["overview", "personal", "together", "explore"].includes(h)) setTabState(h);
     })();
   }, [refresh]);
 
@@ -142,11 +137,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setDismissed([]);
   }, []);
 
-  const setTab = useCallback((t: Tab) => {
-    setTabState(t);
-    if (typeof window !== "undefined") history.replaceState(null, "", `#${t}`);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }, []);
 
   const plan = ws?.plan ?? null;
   const draft = useMemo(() => (viewer ? drafts[viewer] ?? [] : []), [drafts, viewer]);
@@ -304,7 +294,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, [refresh, toast]);
 
   const value: Ctx = {
-    ws, loadError, viewer, setViewer, tab, setTab, personalFocus, setPersonalFocus, plan, draftPlan, draft,
+    ws, loadError, viewer, setViewer, sheet, openSheet, plan, draftPlan, draft,
     setChange, addChanges, removeChange, discardDraft, sim, simLoading, simError, preview, startPreview,
     stopPreview, recs, recsLoading, refreshRecs, dismissed, dismissRec, propose, decide, restore, reset,
     refresh, toasts, toast, inboxOpen, setInboxOpen, sourcesOpen, setSourcesOpen, name, idx,

@@ -44,6 +44,7 @@ LEVERS: list[Lever] = [
     Lever("people.{pid}.emergency_floor", "Minimum safety buffer", "CHF", "person", "Hard floor for personal cash"),
     Lever("people.{pid}.goals.{gid}.target_date", "{goal} — target date", "month", "person"),
     Lever("people.{pid}.goals.{gid}.target_chf", "{goal} — target", "CHF", "person"),
+    Lever("people.{pid}.goals", "Goals", "list", "person", "List of personal savings goals"),
     Lever("people.{pid}.career_breaks", "Career breaks", "list", "person", "List of career breaks"),
     Lever("people.{pid}.career_breaks.{bid}.start", "Career break start", "month", "person"),
     Lever("people.{pid}.career_breaks.{bid}.months", "Career break length", "months", "person"),
@@ -206,6 +207,10 @@ def format_value(unit: str, v: Any) -> str:
             + (f", {x.get('income_pct', 0):.0f}% income" if x.get("income_pct") else "")
             for x in v
         )
+    if unit == "list" and isinstance(v, list) and all(isinstance(x, dict) and "target_chf" in x for x in v):
+        if not v:
+            return "None"
+        return "; ".join(f"{x['name']} CHF {float(x['target_chf']):,.0f} by {M.label(x['target_date'])}".replace(",", "\u2019") for x in v)
     if unit == "list" and isinstance(v, list):
         return f"{len(v)} item{'s' if len(v) != 1 else ''}"
     return str(v)
