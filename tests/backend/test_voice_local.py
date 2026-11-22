@@ -1,11 +1,13 @@
 import json
 from struct import pack
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 from fastapi.testclient import TestClient
 
 from converge import api, config
-from converge.engine.evaluate import evaluate
+from converge.engine.changes import apply_changes
+from converge.engine.evaluate import chf, evaluate
+from converge.models import Change
 from converge.store import Store
 from converge.voice import local, realtime
 
@@ -31,8 +33,6 @@ def test_local_socket_stt_tool_llm_tts_and_text_memory(simple_plan, tmp_path, mo
     keyframes = [b"first-wave", b"second-wave"]
 
     def llm(messages):
-        if len(messages) == 2 and messages[-1]["role"] == "user":
-            return {"content": "I am the demo AI."}
         if messages[-1]["role"] != "tool":
             return {"tool_calls": [{"id": "check", "function": {"name": "get_summary", "arguments": "{}"}}]}
         facts = json.loads(messages[-1]["content"])
@@ -40,7 +40,9 @@ def test_local_socket_stt_tool_llm_tts_and_text_memory(simple_plan, tmp_path, mo
         return {"content": answer}
 
     pcm = pack("<320h", *([1200] * 320))
-    stt = Mock(return_value="I want a sabbatical in May 2028.")
+    goal = "I want a sabbatical in May 2028."
+    what_if = "Simulate moving in together, compare the lowest cache balance before and after the change."
+    stt = Mock(side_effect=[goal, what_if])
     pipeline = local.Pipeline(stt, llm, lambda text: iter(keyframes) if text == answer else iter(()))
     monkeypatch.setattr(local, "load_pipeline", lambda: pipeline)
     with TestClient(api.app) as client:
@@ -48,7 +50,7 @@ def test_local_socket_stt_tool_llm_tts_and_text_memory(simple_plan, tmp_path, mo
         assert "token" not in session
         with client.websocket_connect(session["socket_path"]) as socket:
             greeting = socket.receive_json()["text"]
-            assert greeting == "I am the demo AI."
+            assert greeting == local.LOCAL_INTRO
             assert socket.receive_json()["state"] == "speaking"
             assert socket.receive_json()["state"] == "listening"
             socket.send_json({"type": "start"})
@@ -68,7 +70,22 @@ def test_local_socket_stt_tool_llm_tts_and_text_memory(simple_plan, tmp_path, mo
             assert socket.receive_json()["state"] == "speaking"
             assert [socket.receive_bytes(), socket.receive_bytes()] == keyframes
             assert socket.receive_json()["state"] == "listening"
+
+            socket.send_json({"type": "start"})
+            socket.send_bytes(pcm)
+            socket.send_json({"type": "end"})
+            assert socket.receive_json()["state"] == "thinking"
+            assert socket.receive_json()["text"] == what_if
+            comparison = socket.receive_json()
+            assert comparison["grounded"]
+            moved = apply_changes(simple_plan, [Change(path="shared.household.enabled", value=True)])
+            before = min(p["min_cash"] for p in evaluate(simple_plan)["people"])
+            after = min(p["min_cash"] for p in evaluate(moved)["people"])
+            assert f"{chf(before)} for " in comparison["text"]
+            assert f"{chf(after)} for " in comparison["text"]
+            assert socket.receive_json()["state"] == "speaking"
+            assert socket.receive_json()["state"] == "listening"
         memory = client.get("/api/twin/memory", params={"person": "A"}).json()["memory"]
-        assert any(item["quote"] == stt.return_value for item in memory)
-    stt.assert_called_once_with(pcm)
+        assert any(item["quote"] == goal for item in memory)
+    assert stt.call_args_list == [call(pcm), call(pcm)]
     assert set(local.memory_db().path.parent.glob("*.wav")) == set()

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 import wave
 from array import array
 from dataclasses import dataclass
@@ -21,12 +23,24 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from converge import config
 from converge.engine.changes import apply_changes
+from converge.engine.evaluate import chf
 from converge.models import Change
+from converge.voice.agent import chat_tools, run_tools
 from converge.voice.extract import offline
 from converge.voice.routes import ingest_turn, memory_db
-from converge.voice.tools import Session, definitions, execute_tool
+from converge.voice.tools import Session, execute_tool, ground_turn
+
+log = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16_000
+LOCAL_MODEL_TIMEOUT = 150.0
+LOCAL_TURN_TIMEOUT = 240.0
+LOCAL_INTRO = "I'm Converge's AI coach. What goal would you like to explore?"
+MOVE_IN_CASH_QUESTION = re.compile(
+    r"(?:please )?simulate (?:us )?mov(?:e|ing) in together[.!?,]? "
+    r"(?:and )?compare (?:our |the )?lowest (?:cash|cache)(?: balances?)? before and after(?: the change)?[.!?]?",
+    re.IGNORECASE,
+)
 MAX_PCM = SAMPLE_RATE * 2 * 15
 admitted: dict[str, int] = {}
 admissions_lock = Lock()
@@ -89,6 +103,7 @@ class Pipeline:
 
 @lru_cache(maxsize=1)
 def load_pipeline() -> Pipeline:
+    import numpy as np
     from faster_whisper import WhisperModel
     from piper import PiperVoice
 
@@ -96,15 +111,14 @@ def load_pipeline() -> Pipeline:
     tts = PiperVoice.load(config.LOCAL_TTS_MODEL, use_cuda=False)
 
     def transcribe(pcm: bytes) -> str:
-        segments, _ = stt.transcribe(BytesIO(wave_bytes(pcm, SAMPLE_RATE)), beam_size=1, vad_filter=False)
+        samples = np.frombuffer(pcm[:len(pcm) // 2 * 2], dtype="<i2").astype(np.float32) / 32768.0
+        segments, _ = stt.transcribe(samples, beam_size=1, vad_filter=False)
         return " ".join(segment.text.strip() for segment in segments)
 
     def chat(messages: list[dict]) -> dict:
-        tools = [{"type": "function", "function": {k: v for k, v in declaration.items() if k != "type"}}
-                 for declaration in definitions()]
-        with httpx.Client(timeout=20.0, trust_env=False) as client:
+        with httpx.Client(timeout=httpx.Timeout(LOCAL_MODEL_TIMEOUT, connect=5.0), trust_env=False) as client:
             response = client.post(config.LOCAL_LLM_URL.rstrip("/") + "/chat/completions",
-                                   json=dict(model=config.LOCAL_LLM_MODEL, messages=messages, tools=tools,
+                                   json=dict(model=config.LOCAL_LLM_MODEL, messages=messages, tools=chat_tools(),
                                              max_tokens=300, temperature=0))
             response.raise_for_status()
             return response.json()["choices"][0]["message"]
@@ -139,40 +153,49 @@ async def run_turn(session: Session, pcm: bytes, pipeline: Pipeline, send, histo
     evidence = session.memory.add_turn(session.id, "user", text)
     session.memory.save(session.id, evidence, offline(text))
     await send({"type": "transcript", "speaker": "user", "text": text})
+    if MOVE_IN_CASH_QUESTION.fullmatch(text):
+        # This explicit what-if has one unambiguous lever and no new assumptions.
+        # Use the plan's existing move-in date and costs.
+        result = await asyncio.to_thread(
+            execute_tool, "simulate_changes",
+            {"changes": [{"path": "shared.household.enabled", "value": True}]}, session,
+        )
+        before = min(result["before"]["people"], key=lambda person: person["min_cash"])
+        after = min(result["after"]["people"], key=lambda person: person["min_cash"])
+        answer = (
+            f"Using the plan's move-in date and costs, the lowest individual cash balance in the simulation "
+            f"is {chf(before['min_cash'])} for {before['name']} before the change "
+            f"and {chf(after['min_cash'])} for {after['name']} after moving in together."
+        )
+        remember_reply(history, text, answer)
+        await say(session, answer, pipeline, send)
+        return
     await respond(session, text, pipeline, send, history)
 
 
-async def respond(session: Session, text: str | None, pipeline: Pipeline, send, history: list[dict]) -> None:
+def remember_reply(history: list[dict], text: str, answer: str) -> None:
+    history.append({"role": "user", "content": text})
+    history.append({"role": "assistant", "content": answer})
+    del history[:-8]
+
+
+async def respond(session: Session, text: str, pipeline: Pipeline, send, history: list[dict]) -> None:
     from converge.voice.realtime import INSTRUCTIONS
 
-    messages = [{"role": "system", "content": INSTRUCTIONS}, *history[-8:],
-                {"role": "user", "content": text or "Open the coaching session naturally and introduce yourself as AI."}]
-    for _ in range(4):
-        message = await asyncio.to_thread(pipeline.llm, messages)
-        calls = message.get("tool_calls") or []
-        if not calls:
-            answer = str(message.get("content") or "").strip()[:1500]
-            if not answer:
-                raise ValueError("The local model returned no reply.")
-            if text is not None:
-                history.append({"role": "user", "content": text})
-            history.append({"role": "assistant", "content": answer})
-            del history[:-8]
-            await say(session, answer, pipeline, send)
-            return
-        if len(calls) > 6:
-            break
-        messages.append({"role": "assistant", "content": message.get("content"), "tool_calls": calls})
-        for call in calls:
-            function = call["function"]
-            try:
-                result = await asyncio.to_thread(execute_tool, function["name"], json.loads(function["arguments"]), session)
-            except ValueError:
-                result = {"error": "The discovery tool rejected those arguments."}
-            if result.get("draft_changes"):
-                await send({"type": "draft", "draft_changes": result["draft_changes"]})
-            messages.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result)})
-    raise ValueError("Local voice reached its tool limit for this turn.")
+    messages = [{"role": "system", "content": INSTRUCTIONS + "\nKeep spoken replies to two short sentences."},
+                *history[-8:], {"role": "user", "content": text}]
+    async def on_tool(name, result):
+        if result.get("draft_changes"):
+            await send({"type": "draft", "draft_changes": result["draft_changes"]})
+        comparison = result if name == "explore_what_if" and "scenario" in result else result.get("comparison")
+        if comparison:
+            await send({"type": "comparison", "result": comparison})
+
+    answer = await run_tools(session, messages, lambda history: asyncio.to_thread(pipeline.llm, history), on_tool)
+    if not ground_turn(session, answer):
+        answer = "I couldn't verify the figures against the simulation. Which part should I check again?"
+    remember_reply(history, text, answer)
+    await say(session, answer, pipeline, send)
 
 
 async def serve_socket(socket: WebSocket, session_id: str, get_plan) -> None:
@@ -197,7 +220,8 @@ async def serve_socket(socket: WebSocket, session_id: str, get_plan) -> None:
     try:
         pipeline = await asyncio.wait_for(asyncio.to_thread(load_pipeline), timeout=max(0.1, expires - time()))
         session = Session(memory, session_id, get_plan())
-        await asyncio.wait_for(respond(session, None, pipeline, send, history), timeout=max(0.1, expires - time()))
+        await asyncio.wait_for(say(session, LOCAL_INTRO, pipeline, send), timeout=max(0.1, expires - time()))
+        history.append({"role": "assistant", "content": LOCAL_INTRO})
         deadline = min(expires, time() + config.VOICE_IDLE_SECONDS)
         while time() < deadline:
             event = await asyncio.wait_for(socket.receive(), timeout=max(0.1, deadline - time()))
@@ -211,7 +235,9 @@ async def serve_socket(socket: WebSocket, session_id: str, get_plan) -> None:
                         return
                 continue
             command = json.loads(event.get("text") or "{}")
-            if command.get("type") == "start":
+            if command.get("type") == "playback" and not recording:
+                deadline = min(expires, time() + config.VOICE_IDLE_SECONDS)
+            elif command.get("type") == "start":
                 if recording:
                     continue
                 raw = command.get("draft") or []
@@ -226,14 +252,15 @@ async def serve_socket(socket: WebSocket, session_id: str, get_plan) -> None:
                 plan = get_plan()
                 session = Session(memory, session_id, apply_changes(plan, draft) if draft else plan)
                 await asyncio.wait_for(run_turn(session, bytes(pcm), pipeline, send, history),
-                                       timeout=min(config.VOICE_IDLE_SECONDS, max(0.1, expires - time())))
+                                       timeout=min(LOCAL_TURN_TIMEOUT, max(0.1, expires - time())))
                 pcm.clear()
                 deadline = min(expires, time() + config.VOICE_IDLE_SECONDS)
         await socket.close(code=1000)
     except WebSocketDisconnect:
         return
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, httpx.TimeoutException):
         await socket.close(code=1000, reason="Local voice timed out.")
-    except Exception:
+    except Exception as error:
+        log.warning("Local voice failed (%s)", type(error).__name__)
         await send({"type": "error", "message": "Local voice could not process the turn. Check its models and local server."})
         await socket.close(code=1011)

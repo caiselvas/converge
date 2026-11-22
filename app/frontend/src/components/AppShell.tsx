@@ -3,18 +3,16 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Popover from "@radix-ui/react-popover";
 import * as RTooltip from "@radix-ui/react-tooltip";
-import { AlertTriangle, BookOpen, CheckCircle2, Inbox as InboxIcon, Info, LayoutDashboard, MoreHorizontal, Receipt, RotateCcw, Sparkles, Target, X } from "lucide-react";
+import { AlertTriangle, BookOpen, CheckCircle2, CircleUserRound, FlaskConical, Inbox as InboxIcon, Info, LayoutDashboard, MessagesSquare, MoreHorizontal, Receipt, RotateCcw, Target, X } from "lucide-react";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
 import { scopedHref, useStore, type Scope } from "@/lib/store";
 import { Avatar, Button, Segmented, clsx } from "./ui";
 import { DraftBar } from "./DraftBar";
 import { Inbox } from "./Inbox";
 import { Sources } from "./Sources";
 import { ChecksBadge } from "./ChecksBadge";
-import { AskPanel } from "./AskPanel";
 import { OutcomeStrip } from "./Plan";
 
 function Logo() {
@@ -34,7 +32,7 @@ function ViewerSwitch({ mobile = false }: { mobile?: boolean }) {
   if (!ws) return null;
   return (
     <div className="flex items-center gap-2">
-      <span className={clsx("text-[12px] text-muted", !mobile && "hidden xl:inline")}>Viewing as</span>
+      <span className={clsx("whitespace-nowrap text-[12px] text-muted", !mobile && "hidden xl:inline")}>Viewing as</span>
       <div role="radiogroup" aria-label="Viewing as" className="inline-flex rounded-full bg-page p-0.5 ring-1 ring-line">
         {ws.people.map((p, i) => (
           <button
@@ -130,9 +128,12 @@ export function Drawer({ open, onOpenChange, title, children, width = 520 }: { o
 }
 
 const tabs = [
-  { path: "/", label: "Overview", Icon: LayoutDashboard },
+  { path: "/", label: "What if", Icon: FlaskConical },
+  { path: "/plan", label: "Plan", Icon: LayoutDashboard },
   { path: "/goals", label: "Goals", Icon: Target },
   { path: "/expenses", label: "Expenses", Icon: Receipt },
+  { path: "/agent", label: "Agent", Icon: MessagesSquare },
+  { path: "/profile", label: "Profile", Icon: CircleUserRound },
 ] as const;
 
 function Navigation({ mobile = false }: { mobile?: boolean }) {
@@ -140,7 +141,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
   const { scope } = useStore();
   return (
     <nav aria-label="Plan pages" className={mobile
-      ? "fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 border-t border-line bg-white pb-[env(safe-area-inset-bottom)] md:hidden"
+      ? "fixed inset-x-0 bottom-0 z-40 grid grid-cols-6 border-t border-line bg-white pb-[env(safe-area-inset-bottom)] md:hidden"
       : "hidden items-center gap-1 md:flex"}>
       {tabs.map(({ path: href, label, Icon }) => (
         <Link key={href} href={scopedHref(href, scope)} aria-current={path === href ? "page" : undefined}
@@ -157,26 +158,22 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { ws, loadError, refresh, inboxOpen, setInboxOpen, sourcesOpen, setSourcesOpen, draft, preview, sim, scope, setScope } = useStore();
   const path = usePathname();
-  const [askOpen, setAskOpen] = useState(false);
   return (
     <RTooltip.Provider>
       <div className="min-h-screen">
         <div className="sticky top-0 z-30 bg-white">
           <header className="border-b border-line">
             <div className="mx-auto flex h-14 max-w-[1120px] items-center justify-between gap-2 px-4 md:grid md:grid-cols-[1fr_auto_1fr] md:px-5">
-              <Link href={scopedHref("/", scope)} aria-label="Converge overview"><Logo /></Link>
+              <Link href={scopedHref("/", scope)} aria-label="Converge what-if explorer"><Logo /></Link>
               <Navigation />
               <div className="flex items-center justify-end gap-1 lg:gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setAskOpen(!askOpen)} aria-expanded={askOpen} aria-controls={askOpen ? "ask-panel" : undefined} className="hidden md:inline-flex">
-                  <Sparkles size={16} /> Ask
-                </Button>
                 <InboxButton />
                 <MoreMenu />
                 <div className="hidden md:block"><ViewerSwitch /></div>
               </div>
             </div>
           </header>
-          {ws && (
+          {ws && (path === "/plan" || path === "/goals" || path === "/expenses") && (
             <>
               <div className="flex justify-center border-b border-line px-4 py-2">
                 <Segmented<Scope> ariaLabel="Plan scope" value={scope} onChange={setScope} size="sm" options={[
@@ -185,7 +182,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   { value: "emil", label: ws.people[1].name },
                 ]} />
               </div>
-              {path !== "/" && <OutcomeStrip />}
+              {path !== "/plan" && <OutcomeStrip />}
             </>
           )}
         </div>
@@ -213,7 +210,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <Navigation mobile />
         {ws && <div className="pointer-events-none fixed inset-x-0 bottom-[calc(56px+env(safe-area-inset-bottom))] z-[35] mx-auto flex max-w-[1120px] flex-col px-3 pb-2 sm:px-6 md:bottom-0 md:pb-4">
-          <AskPanel open={askOpen} setOpen={setAskOpen} />
           <DraftBar />
         </div>}
         <Toasts />

@@ -58,7 +58,7 @@ async def coach(session, provider, model, usage):
                     result = {"error": str(error)}
                 context["tool_results_this_turn"].append({"tool": call.name, "result": result})
         elif raw.reply and raw.reply.strip():
-            if raw.reply.count("?") > 1 or questions(raw.reply) & asked:
+            if questions(raw.reply) & asked:
                 context["revision"] = {"draft": raw.reply, "issue": "Ask at most one question and avoid repeating an earlier question."}
                 continue
             if unsupported := unmatched_numbers(session, raw.reply):
@@ -106,6 +106,8 @@ async def chat(args):
                     print(f"AI: {reply}")
                     if not result["grounded"]:
                         print("[Numeric grounding flagged this reply]")
+                    if result["multiple_questions"]:
+                        print("[Multiple questions flagged in this reply]")
             except Exception as error:
                 print(f"Coaching turn failed ({type(error).__name__}).")
     except (EOFError, KeyboardInterrupt):

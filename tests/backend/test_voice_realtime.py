@@ -33,7 +33,10 @@ def test_mint_contract_and_cache_control(voice_api, monkeypatch):
     request = post.call_args.kwargs["json"]
     assert request["expires_after"]["seconds"] == 30
     assert request["session"]["audio"]["input"]["turn_detection"]["create_response"] is False
-    assert {t["name"] for t in request["session"]["tools"]} == {"get_summary", "simulate_changes", "list_recommendations", "propose_changes", "save_memory", "get_gaps", "get_profile", "compare_paths"}
+    assert {t["name"] for t in request["session"]["tools"]} == {
+        "get_summary", "simulate_changes", "list_recommendations", "propose_changes", "save_memory",
+        "get_gaps", "get_profile", "compare_paths", "education_programs", "explore_what_if",
+    }
 
 
 @pytest.mark.parametrize(("provider", "key"), [("off", "fake"), ("openai_realtime", "")])

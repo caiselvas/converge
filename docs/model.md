@@ -14,14 +14,15 @@ All amounts are CHF. The time step is one calendar month, and flows are booked a
 | Investments | `synthetic-assets.csv` | Single snapshot from 2025-01-01 with no transaction history. Grown at the assumed return; **not** counted as liquidity |
 | Liabilities | `synthetic-liabilities.csv` | Snapshot. Treated as interest-only when the data has no payment (the demo profiles have none) |
 | Goals | `synthetic-goals.csv` | Target amount by date |
+| Taxes and pensions | Plan inputs | Separate per-person income tax budget, vested opening pension, and monthly pension credit. All default to zero pending better data |
 
-Salary transactions are treated as **net pay** because they closely match the UBS profile field `reference_monthly_net_income_chf`. The optional extra deduction defaults to 0% and can be set to model an additional outflow proportional to net pay.
+Salary transactions are treated as **net pay** because they closely match the UBS profile field `reference_monthly_net_income_chf`. The optional extra deduction defaults to 0% and can model an additional outflow proportional to net pay. The optional personal tax budget is fixed in nominal CHF and covers income tax payable outside payroll. Include only amounts that are not already accounted for in take-home pay, spending or the extra deduction. Switzerland’s salary certificate lists salary, withheld amounts and contributions. [Swiss salary certificate](https://www.ch.ch/en/work/salary/salary-certificate/)
 
 ## 2. Monthly transition (per partner *i*)
 
 ```
 income_i   = usual_income_i · (1+g)^(t/12) · break_factor_i(t)     (+ bonus/12 if enabled)
-deduct_i   = τ · income_i                                         optional extra deduction (default 0%)
+deduct_i   = τ · (income_i − family allowance) + tax_budget_i      personal tax budget and extra deduction are optional
 spending_i = (personal budgets + own-home budgets if not cohabiting) · (1+π)^(t/12)
 household_i= share_i(t) · (shared rent* + utilities + groceries) · (1+π)^(t/12)  (+ moving cost once)
 housing_i  = own_i · (mortgage_t · r_m/12 + value_t · m/12)        interest + maintenance (expenses)
@@ -38,13 +39,22 @@ cash_i[t]  = cash_i[t-1] + income − deduct − spending − household − hous
 - **Property.** The deposit converts cash into equity: net worth changes only by the fees. Interest and maintenance are expenses. Amortisation reduces cash and debt equally. The second mortgage (above 2/3 of value) is amortised over 15 years. Ownership, deposit and running costs all follow `own_i`, so each partner's equity is `own_i · (value − mortgage)`.
 - **Cost-sharing rules.** Equal, proportional to usual income, or custom. Optionally, contributions follow *actual* income during a career break, so the working partner covers more.
 - **Career break.** Income is multiplied by `income_pct` for the break's months, with optional one-off costs in the first month. Overlapping breaks are rejected.
-- **Net worth** = cash + investments + property share − mortgage share − loans. Liquidity (cash) is tracked separately.
+- **Net worth** = cash + investments + vested occupational pension + property share − mortgage share − loans. Liquidity (cash) is tracked separately.
+- **Pension.** A user can supply a vested balance and the combined employer and employee savings credit from their pension statement. The employee deduction is already reflected in take-home pay, and the employer contribution does not pass through personal cash. During a career break or study period the credit scales with the fraction of pay retained. The model applies no pension interest, thresholds, payout schedules or Pillar 1/3 calculations. Pension balances are excluded from ordinary goals and cash buffers. [Federal Social Insurance Office](https://www.bsv.admin.ch/en/old-age-provision-occupational-benefits-plan)
 
 ### Future net income scenarios
 
 A personal path can add dated `income_steps` with a user-assumed CHF/month delta and label. Each step adds a fixed nominal amount to grown regular net salary from its start month. Active steps stack; any scenario with a negative projected salary is rejected. Career break pay and other salary-based rules use the resulting income. Steps are assumptions. UBS data cannot estimate the salary effect of a degree, promotion or job change.
 
-The voice tool compares independently simulated paths over their common projected months. Net position is combined month-end net worth (cash, investments and property equity less other liabilities). The first strictly higher month counts as a lead, including the first projected month. Equal paths never overtake.
+The voice path tool compares combined month-end net worth over a common projection. It reports the first month after the last shortfall as sustained break-even, or explains whether the option was never behind or remains behind at the end.
+
+### What-if explorer
+
+- The agreed plan, or the viewer's draft when there is one, provides the baseline. The alternative applies validated changes over the same starting balances and projection months. Cohabitation and study can be combined with an existing or planned joint purchase. Living separately keeps independent housing costs and disables a joint purchase. Existing obligations such as shared childcare continue.
+- A study event uses the programme’s published duration and pays the selected nominal fees every six months from the first study month. Quantitative Finance defaults to three semesters at CHF 780 each. Fine Arts defaults to four semesters at CHF 755 each (CHF 720 tuition plus CHF 35 compulsory sports fee). Fee supplements, application costs and materials can be entered explicitly. The default 30% pay retained during studies is illustrative. Post-study pay starts at the first month after the programme and defaults to no change. It represents a user assumption, including the assumption of an immediate return to employment. The FSO publishes distributions by field, but the cited cohort is applied-sciences bachelor graduates, standardized to full-time gross earnings. It supplies context, rather than individual master’s net pay or a causal degree premium. [UZH / ETH fee and duration](https://www.msfinance.uzh.ch/en/admission/applicationinformation.html) · [ZHdK programme](https://www.zhdk.ch/en/degree-programmes/finearts/master-fine-arts) · [ZHdK fees](https://www.zhdk.ch/en/degree-programmes/tuition-fees) · [FSO survey](https://dam-api.bfs.admin.ch/hub/api/dam/assets/32172110/master)
+- The comparison reports each partner’s minimum month-end cash, the date and margin over their buffer, and combined ending net worth. Combined cash is calculated by summing both balances in the same month. A break-even date for net worth means the first month after the last shortfall through the selected horizon. Other path comparisons in the agent may use an explicitly labelled 120-month extension.
+- Uncertainty is optional. Each of 128 paired draws (seed 20261122) uses the same shocks for the baseline and alternative. A uniform shock within ±1.5 percentage points shifts the annual spending inflation for the full run, clipped to the engine’s allowed inflation bounds. Investment values use a common monthly lognormal shock with 10% annualized volatility. The log drift preserves the assumed annual expected investment growth. The inflation and monthly market draws are independent. Controls let users vary both magnitudes. The result shows counts of draws with any month below a cash buffer and the 10th/50th/90th percentiles of the paired difference in combined ending net worth. Market returns move net worth and have no direct cash effect because investments are never sold. No job-loss, admission or salary probabilities are claimed.
+- The interface uses an overlaid baseline and adjustable counterfactual, informed by how ProjectionLab and Boldin make scenario comparisons discoverable. Converge adds side-by-side constraints for each partner and a separate household view. [ProjectionLab What If](https://projectionlab.com/help/using-what-if) · [Boldin scenario comparison](https://help.boldin.com/en/articles/4326642-video-demo-create-and-compare-scenarios)
 
 ### Planning for a child
 
@@ -95,13 +105,13 @@ Listed in-app (`···` → *Assumptions & sources*) and in `app/backend/converg
 ## 7. Limitations
 
 - Synthetic data only. It is not representative of the Swiss population, and the relationship between the two profiles is assumed.
-- The optional extra deduction is a flat percentage of net pay. The model omits tax lag, wealth tax, pillar 2/3a and the tax effects of marriage or home ownership.
+- The optional extra deduction is a flat percentage of net pay. The model applies user-entered tax budgets and pension credits. It omits tax assessments, wealth tax, Pillar 1 and 3a entitlement, and the legal or tax effects of marriage and home ownership.
 - Child scenarios assume eligibility for the modeled benefits. They omit employment top-ups, child tax deductions, Zurich income- and wealth-based subsidies, school-age care, education costs and allowances, larger housing costs, and automatic safety-buffer increases. Users can change rent and safety buffers through their normal plan controls.
-- Deterministic single path, with no Monte Carlo. Sensitivity is explored through stress tests.
-- Investment portfolios are a single snapshot with a constant assumed return, and are never sold to fund a deposit.
+- The main path is deterministic. The what-if explorer layers on illustrative, seeded inflation and market draws. These are conditional model outputs and depend on their specified distributions.
+- Investment portfolios start from a single snapshot. The standard projection uses constant assumed growth and the uncertainty run applies market shocks. Investments are never sold to fund a deposit.
 - The affordability check gives an indication using combined usual net income. A lender makes its own assessment using gross income.
 - The recommendation search is bounded (single levers and pairs). Larger restructurings must be made by the user.
 - Identity is simulated by switching between partners; there is no authentication.
-- The live LLM path was verified for request shape and error fallback, but not run with a valid key in this environment.
+- The agent uses the validated scenario tool and returns engine comparison cards separately from its conversational explanation. Numeric grounding checks magnitudes against recent tool facts and cannot prove that a number was attributed to the correct person, date or metric.
 
-- Voice discovery is an AI interview over the synthetic twin. The engine computes its simulations, which are for planning only. Sensitive questions are skippable. The app stores transcripts and per-viewer memory in local SQLite, with a clear-memory control in Ask. Converge persists no audio. Hosted providers process the live audio or current text turn when enabled. See [Voice discovery](VOICE.md) for the limits.
+- The finance agent is an AI interview and scenario tool over the synthetic twin. Sensitive questions are skippable. The app stores transcripts and per-viewer memory in local SQLite. Users can review the observations and clear their conversation history on the Profile page. Converge persists no audio. See [Agent and voice configuration](VOICE.md).

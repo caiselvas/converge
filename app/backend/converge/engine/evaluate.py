@@ -149,7 +149,7 @@ def evaluate(plan: Plan, res: SimResult | None = None) -> dict:
                 start_cash=round(p.opening_cash, 2),
                 end_cash=round(s.cash[-1], 2),
                 end_net_worth=round(s.net_worth[-1], 2),
-                start_net_worth=round(p.opening_cash + p.investments - sum(l.principal_chf for l in p.liabilities), 2),
+                start_net_worth=round(p.opening_cash + p.investments + p.pension_opening_chf - sum(l.principal_chf for l in p.liabilities), 2),
                 min_cash=round(min_cash, 2),
                 min_cash_month=res.months[min_t],
                 headroom=round(min_cash - p.emergency_floor, 2),
@@ -289,7 +289,7 @@ def evaluate(plan: Plan, res: SimResult | None = None) -> dict:
         series={
             p.id: {
                 k: [round(x, 2) for x in getattr(s, k)]
-                for k in ("cash", "investments", "net_worth", "income", "family_allowance", "tax", "spending", "household",
+                for k in ("cash", "investments", "pension", "net_worth", "income", "family_allowance", "tax", "spending", "household",
                           "housing", "amortization", "one_off", "deposit", "net_flow", "property_value", "mortgage")
             }
             for p, s in zip(plan.people, res.people)

@@ -155,7 +155,7 @@ export function OutcomeStrip() {
   return (
     <div className="border-b border-line bg-page">
       <div className="mx-auto flex max-w-[1120px] items-center gap-2 px-4 md:px-5">
-        <Link href={scopedHref("/", scope)} aria-label={`View on Overview: ${headline(current, personId).title}`} className="block min-w-0 flex-1 py-1.5 hover:text-accent">
+        <Link href={scopedHref("/plan", scope)} aria-label={`View plan: ${headline(current, personId).title}`} className="block min-w-0 flex-1 py-1.5 hover:text-accent">
           <div className="flex items-center gap-2 text-[13px] font-medium">
             <StatusDot issues={scopedIssues(current, personId)} />
             <span className="truncate">{headline(current, personId).title}</span>

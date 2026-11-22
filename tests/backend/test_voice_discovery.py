@@ -7,6 +7,7 @@ from converge import ai, config
 from converge.engine.changes import apply_changes
 from converge.engine.evaluate import evaluate
 from converge.models import Change, Goal
+from converge.seed import default_plan
 from converge.voice.extract import Candidates, extract, offline
 from converge.voice.memory import Item, Memory
 from converge.voice.routes import ingest_turn
@@ -201,7 +202,7 @@ def test_objective_requires_confirmation_in_the_users_own_words(session):
     assert execute_tool("get_gaps", {}, session)["means_without_confirmed_objective"] == []
 
 
-def test_compare_paths_matches_independent_runs_and_reports_never(session):
+def test_compare_paths_identical_start_does_not_report_trivial_break_even(session):
     change = {"path": "people.B.income_steps", "value": [
         {"id": "raise", "label": "Expected net pay change", "start": "2027-04", "monthly_chf_delta": 1000},
     ]}
@@ -216,9 +217,86 @@ def test_compare_paths_matches_independent_runs_and_reports_never(session):
         assert [p["goals"] for p in path["people"]] == [p["goals"] for p in expected["people"]]
     above = next(x for x in actual["overtakes"] if x["path"] == "alternative")
     below = next(x for x in actual["overtakes"] if x["path"] == "baseline")
-    assert above["month"] == "2027-04" and ground_turn(session, above["speakable"])
-    assert below["month"] is None and below["status"] == "never within horizon"
+    assert above["break_even_month"] is None and above["status"] == "never behind"
+    assert above["max_deficit_chf"] is None and ground_turn(session, above["speakable"])
+    assert below["break_even_month"] is None and below["status"] == "does not catch up"
+    assert "does not catch up by Dec 2036" in below["speakable"]
     assert not session.plan.person("B").income_steps
+
+
+def test_compare_paths_break_even_requires_staying_at_or_above(session):
+    steps = [
+        {"id": f"step-{i}", "label": "Pay change", "start": f"2027-{i:02}", "monthly_chf_delta": delta}
+        for i, delta in enumerate((-100, 200, -300, 400), start=1)
+    ]
+    result = execute_tool("compare_paths", {"paths": [
+        {"name": "baseline", "changes": []},
+        {"name": "alternative", "changes": [{"path": "people.B.income_steps", "value": steps}]},
+    ]}, session)
+    alternative = result["overtakes"][1]
+    assert alternative["break_even_month"] == "2027-04"
+    assert alternative["max_deficit_month"] == "2027-03"
+    assert alternative["max_deficit_chf"] == 200
+
+
+@pytest.fixture
+def emil_paths():
+    def income_step(label, start, delta):
+        return {"path": "people.P00809.income_steps", "value": [
+            {"id": "raise", "label": label, "start": start, "monthly_chf_delta": delta},
+        ]}
+
+    return [
+        {"name": "Switch", "changes": [income_step("Switch jobs", "2028-07", 500)]},
+        {"name": "Master's", "changes": [
+            {"path": "people.P00809.career_breaks", "value": [
+                {"id": "study", "label": "Study", "start": "2028-01", "months": 12,
+                 "income_pct": 50, "one_off_cost_chf": 12000},
+            ]},
+            income_step("Post-degree raise", "2029-01", 2000),
+        ]},
+    ]
+
+
+def test_compare_paths_emil_matches_separate_runs(session, emil_paths):
+    plan = default_plan(("P00918", "P00809"))
+    session = Session(session.memory, session.memory.start("P00809"), plan)
+    original = plan.model_dump()
+    normal_before = evaluate(plan)
+    actual = execute_tool("compare_paths", {"paths": emil_paths}, session)
+    assert (actual["default_end_month"], actual["extended_end_month"]) == ("2032-12", "2036-12")
+    default_runs, extended_runs = [], []
+    for path, inputs in zip(actual["paths"], emil_paths):
+        scenario = apply_changes(plan, [Change(**ch) for ch in inputs["changes"]])
+        default_runs.append(evaluate(scenario)["household"]["net_worth"])
+        scenario.assumptions.horizon_months = 120
+        extended_runs.append(evaluate(scenario)["household"]["net_worth"])
+        assert path["end_household_net_worth"] == default_runs[-1][-1]
+        assert path["extended_end_household_net_worth"] == extended_runs[-1][-1]
+        assert "less certain" in path["speakable"]
+
+    switch, masters = actual["overtakes"]
+    default_gap = round(default_runs[1][-1] - default_runs[0][-1], 2)
+    extended_gaps = [round(m - s, 2) for s, m in zip(*extended_runs)]
+    assert masters["default_end_gap_chf"] == default_gap == pytest.approx(-1900, abs=100)
+    assert masters["extended_end_gap_chf"] == extended_gaps[-1] == pytest.approx(70000, abs=200)
+    assert masters["break_even_month"] == "2033-02"
+    assert masters["max_deficit_month"] == "2028-12"
+    assert masters["max_deficit_chf"] == -min(extended_gaps)
+    assert masters["end_monthly_difference_chf"] == extended_gaps[-1] - extended_gaps[-2] == 1500
+    assert switch["break_even_month"] is None
+    assert switch["extended_end_gap_chf"] == -masters["extended_end_gap_chf"]
+    assert "Feb 2033" in masters["speakable"] and ground_turn(session, masters["speakable"])
+    assert plan.model_dump() == original and evaluate(plan) == normal_before
+
+
+def test_ingest_flags_multiple_assistant_questions_without_blocking(session, caplog):
+    text = "What matters to you? What would success look like?"
+    result = asyncio.run(ingest_turn(session, "assistant", text))
+    assert result["grounded"] is True and result["multiple_questions"] is True
+    assert session.memory.recent_turns(session.id)[-1]["text"] == text
+    assert "multiple question marks" in caplog.text
+    assert turn(session, "What if I switch jobs? Could it work?")["multiple_questions"] is False
 
 
 def test_profile_provenance_for_ledger_figures_and_estimates(session):

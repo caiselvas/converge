@@ -15,6 +15,7 @@ from converge.engine import months as M
 from converge.engine.changes import ChangeError, apply_changes, describe, format_value, lever_catalogue, required_approvers
 from converge.engine.evaluate import evaluate
 from converge.engine.recommend import recommend
+from converge.engine.what_if import GRADUATE_SURVEY, PROGRAMS, WhatIf, compare
 from converge.models import KITA_INFANT_TARIFF, Change, Child, ParentalLeave, Plan
 from converge.store import Store, WorkflowError, normalise
 from converge.voice.realtime import router_for as voice_router
@@ -49,6 +50,10 @@ class ChangesIn(BaseModel):
     base: Literal["current", "original"] = "current"
     include_base: bool = True
     stress: StressIn | None = None
+
+
+class WhatIfIn(WhatIf):
+    draft: list[Change] = Field(default_factory=list, max_length=200)
 
 
 class ProposalIn(BaseModel):
@@ -163,6 +168,21 @@ def simulate_endpoint(body: ChangesIn):
 def recommendations(body: ChangesIn):
     plan = _apply(_base(body.base), body.changes)
     return recommend(_with_stress(plan, body.stress))
+
+
+@app.get("/api/what-if")
+def what_if_catalogue():
+    return {"programs": PROGRAMS, "graduate_survey": GRADUATE_SURVEY}
+
+
+@app.post("/api/what-if")
+def what_if(body: WhatIfIn):
+    try:
+        return compare(_apply(store.plan, body.draft), body)
+    except KeyError:
+        raise HTTPException(422, "Choose a person in this workspace.") from None
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from None
 
 
 @app.post("/api/proposals")

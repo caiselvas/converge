@@ -67,9 +67,13 @@ function BreakEditor({ value, onSave, onRemove, onCancel, min, submitLabel = "Sa
     <div className="space-y-3 rounded-xl bg-page p-4">
       <div className="grid grid-cols-2 gap-3 text-[12px] text-muted">
         <label>From<div className="mt-1"><MonthField ariaLabel="Break start" value={b.start} min={min} onChange={(v) => setB({ ...b, start: v })} /></div></label>
-        <label>Length<div className="mt-1"><NumberField ariaLabel="Break months" value={b.months} min={1} max={36} step={1} prefix="" suffix="mo" width="100%" onChange={(v) => setB({ ...b, months: v })} /></div></label>
+        <label>Length<div className="mt-1"><NumberField ariaLabel="Break months" value={b.months} min={1} max={36} step={1} prefix="" suffix="mo" width="100%" disabled={!!b.study_program} onChange={(v) => setB({ ...b, months: v })} /></div></label>
         <label>Income kept<div className="mt-1"><NumberField ariaLabel="Income kept" value={b.income_pct} min={0} max={100} step={10} prefix="" suffix="%" width="100%" onChange={(v) => setB({ ...b, income_pct: v })} /></div></label>
         <label>One-off costs<div className="mt-1"><NumberField ariaLabel="Break costs" value={b.one_off_cost_chf} step={1000} width="100%" onChange={(v) => setB({ ...b, one_off_cost_chf: v })} /></div></label>
+        {b.study_program && <>
+          <label>Fees per semester<div className="mt-1"><NumberField ariaLabel="Fees per semester" value={b.semester_fee_chf ?? 0} max={100_000} step={50} width="100%" onChange={(v) => setB({ ...b, semester_fee_chf: v })} /></div></label>
+          <label>Net pay change after study<div className="mt-1"><NumberField ariaLabel="Net pay change after study" value={b.post_study_pay_delta_chf ?? 0} min={-50_000} max={50_000} step={100} width="100%" onChange={(v) => setB({ ...b, post_study_pay_delta_chf: v })} /></div></label>
+        </>}
       </div>
       <div className="flex items-center justify-between">
         {onRemove ? <Button size="sm" variant="ghost" onClick={onRemove}><Trash2 size={14} /> Remove</Button> : <span />}
@@ -116,6 +120,17 @@ export function PersonExpenses({ person, base }: { person: Person; base: Person 
       <PlanSection title="Income">
         <EditRow label="Net income" sub={`Observed ${chf(person.income_observed_monthly)}/mo`} value={chf(person.income_monthly)} changed={person.income_monthly !== base.income_monthly}>
           <NumberField ariaLabel="Net income" value={person.income_monthly} step={100} width={170} onChange={(v) => setChange(`people.${person.id}.income_monthly`, v)} />
+        </EditRow>
+      </PlanSection>
+      <PlanSection title="Tax and pension inputs">
+        <EditRow label="Income tax paid outside payroll" sub="Monthly budget for tax bills. Enter only tax that your employer hasn’t already withheld." value={chf(person.income_tax_monthly)} changed={person.income_tax_monthly !== base.income_tax_monthly}>
+          <NumberField ariaLabel="Monthly income tax budget" value={person.income_tax_monthly} max={100_000} step={50} width={170} onChange={(v) => setChange(`people.${person.id}.income_tax_monthly`, v)} />
+        </EditRow>
+        <EditRow label="Vested pension at plan start" sub="Use the vested benefit on your pension statement. It adds to net worth and stays outside available cash." value={chf(person.pension_opening_chf)} changed={person.pension_opening_chf !== base.pension_opening_chf}>
+          <NumberField ariaLabel="Vested pension at plan start" value={person.pension_opening_chf} max={1e9} step={1000} width={170} onChange={(v) => setChange(`people.${person.id}.pension_opening_chf`, v)} />
+        </EditRow>
+        <EditRow label="Monthly occupational pension credit" sub="Enter the employee and employer savings credit together. In a study period or career break it scales with pay kept." value={chf(person.pension_credit_monthly)} changed={person.pension_credit_monthly !== base.pension_credit_monthly}>
+          <NumberField ariaLabel="Monthly occupational pension credit" value={person.pension_credit_monthly} max={100_000} step={50} width={170} onChange={(v) => setChange(`people.${person.id}.pension_credit_monthly`, v)} />
         </EditRow>
       </PlanSection>
       {groups.map(({ label, keys }) => {

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -12,6 +13,7 @@ from converge.engine import months as M
 from converge.engine.changes import apply_changes
 from converge.engine.evaluate import chf, evaluate
 from converge.engine.recommend import recommend
+from converge.engine.what_if import PROGRAMS, WhatIf, compare, compare_applied
 from converge.models import Change, Goal, Month, Plan
 from converge.voice.controller import get_gaps, goal_keys, known_items
 from converge.voice.finance import CompareArgs, ProfileArgs, compare_paths, profile
@@ -135,8 +137,24 @@ def goal_changes(plan: Plan, person: str, items: list[dict]) -> list[Change]:
 
 
 TOOLS = {
-    "get_summary": (SummaryArgs, "Get simulated cash and goals. Use scope together for affordability, including the configured home preview and both cash buffers."),
-    "simulate_changes": (ChangesArgs, "Compare the current plan to a hypothetical list of whitelisted changes."),
+    "education_programs": (Empty, "Get published tuition, durations and source links for Quantitative Finance and Fine Arts."),
+    "explore_what_if": (WhatIf, (
+        "Compare the current plan with studying or a different housing arrangement, or combine both. "
+        "For study, call education_programs and get_profile first. Supply a month, person ID and percent of usual pay "
+        "during studies. Post-study pay delta defaults to zero. Ask for the user's expectation before testing a premium. "
+        "For housing, use arrangement together or separate; separate turns off cohabitation and a joint home purchase. "
+        "Use housing.purchase=include to test the configured purchase or exclude to remove it. "
+        "Optional uncertainty varies inflation and investment returns, not future pay."
+    )),
+    "get_summary": (SummaryArgs, "Read the current plan's simulated cash and goals. Use scope together for configured mortgage affordability. To compare moving in, call explore_what_if."),
+    "simulate_changes": (ChangesArgs, (
+        "Compare a what-if with the current plan. Pass changes as [{path,value}]. "
+        "To simulate moving in together, use shared.household.enabled=true; optionally use "
+        "shared.household.move_in (YYYY-MM) and shared.household.rent (CHF/month). "
+        "For a home purchase use shared.property.enabled=true, shared.property.price (CHF), and "
+        "shared.property.purchase (YYYY-MM). Keep unspecified plan assumptions. "
+        "Report both before and after results for the measure the user asks about."
+    )),
     "list_recommendations": (Empty, "List options verified by the simulation engine."),
     "propose_changes": (ProposalArgs, "Queue validated changes for review in the app. Use from_confirmed_goals for saved goals."),
     "save_memory": (MemoryArgs, "Save pending evidence-backed observations from the last user turn. The viewer confirms them in the app."),
@@ -170,10 +188,16 @@ def execute_tool(name: str, args: dict, session: Session) -> dict:
         result = profile(session.plan, parsed.person or person, parsed.topic)
     elif isinstance(parsed, CompareArgs):
         result = compare_paths(session.plan, parsed)
+    elif isinstance(parsed, WhatIf):
+        result = compare(session.plan, parsed, include_series=False)
+    elif name == "education_programs":
+        result = PROGRAMS
     elif name == "simulate_changes":
         after = apply_changes(session.plan, parsed.changes)
         focus = (person, parsed.focus_goal) if parsed.focus_goal else None
         result = dict(before=summary(session.plan), after=summary(after, focus=focus), focus_goal=parsed.focus_goal)
+        if after.assumptions.horizon_months == session.plan.assumptions.horizon_months:
+            result["comparison"] = compare_applied(session.plan, after)
         if not any(ch.path.startswith("people.") and ".goals" in ch.path for ch in parsed.changes):
             result["draft_changes"] = [ch.model_dump() for ch in parsed.changes]
     elif name == "list_recommendations":
@@ -203,8 +227,9 @@ def execute_tool(name: str, args: dict, session: Session) -> dict:
 
 def unmatched_numbers(session: Session, text: str, before: list[dict] | None = None) -> list[float]:
     known = ai._fact_numbers(session.memory.recent_tools(session.id) if before is None else before)
-    return [n for n in ai._numbers_in(text)
-            if not any(abs(n - k) < 0.005 or abs(n - round(k)) < 0.005 for k in known)]
+    prose = re.sub(r"(?m)^\s*\d{1,2}[.)][ \t]+", "", text)
+    return [n for n in ai._numbers_in(prose)
+            if not any(abs(n - abs(k)) < 0.005 or abs(n - round(abs(k))) < 0.005 for k in known)]
 
 
 def ground_turn(session: Session, text: str, before: list[dict] | None = None) -> bool:

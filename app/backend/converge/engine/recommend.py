@@ -177,7 +177,7 @@ def _generate(plan: Plan, ev: dict) -> dict[str, list[Candidate]]:
                                                    [f"{p.name} trims flexible spending by {pct * 100:.0f}% ({chf(saved)}/month)"]))
         for b in p.career_breaks:
             base = f"people.{p.id}.career_breaks.{b.id}"
-            for m in range(b.months - 1, 0, -1):
+            for m in range(b.months - 1 if b.study_program is None else 0, 0, -1):
                 add(f"break_shorter:{p.id}", Candidate(("break_shorter",), [Change(path=f"{base}.months", value=m)],
                                                        {"break_shorter": b.months - m},
                                                        [f"{p.name}'s break lasts {m} months instead of {b.months}"]))
@@ -187,7 +187,7 @@ def _generate(plan: Plan, ev: dict) -> dict[str, list[Candidate]]:
                 add(f"break_partial:{p.id}", Candidate(("break_partial",), [Change(path=f"{base}.income_pct", value=pct)],
                                                        {"break_partial": pct - b.income_pct},
                                                        [f"{p.name} keeps {pct}% of income during the break (part-time)"]))
-            for d in (3, 6, 9, 12, 15, 18):
+            for d in ((12,) if b.study_program else (3, 6, 9, 12, 15, 18)):
                 ns = M.add(b.start, d)
                 if M.index(M.add(ns, b.months - 1), end) > 0:
                     break

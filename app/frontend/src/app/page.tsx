@@ -1,1 +1,1 @@
-export { PlanView as default } from "@/components/Plan";
+export { WhatIfExplorer as default } from "@/components/WhatIfExplorer";

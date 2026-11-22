@@ -68,6 +68,7 @@ class PersonSeries:
     cash_open: list[float] = field(default_factory=list)
     cash: list[float] = field(default_factory=list)
     investments: list[float] = field(default_factory=list)
+    pension: list[float] = field(default_factory=list)
     property_value: list[float] = field(default_factory=list)
     mortgage: list[float] = field(default_factory=list)
     loans: list[float] = field(default_factory=list)
@@ -159,7 +160,7 @@ def _child_flows(plan: Plan, months: list[str]) -> tuple[dict[str, list[ChildMon
     return costs, leave
 
 
-def simulate(plan: Plan) -> SimResult:
+def simulate(plan: Plan, *, investment_factors: list[float] | None = None) -> SimResult:
     a = plan.assumptions
     H = a.horizon_months
     start = a.start
@@ -193,7 +194,7 @@ def simulate(plan: Plan) -> SimResult:
         breaks = []
         for b in p.career_breaks:
             bi = M.index(b.start, start)
-            breaks.append((bi, bi + b.months, b.income_pct / 100.0, b.one_off_cost_chf, b.label))
+            breaks.append((bi, bi + b.months, b))
         comp.append(
             dict(
                 personal_budget=personal_budget,
@@ -208,6 +209,7 @@ def simulate(plan: Plan) -> SimResult:
     series = [PersonSeries(pid=p.id, name=p.name, floor=p.emergency_floor) for p in plan.people]
     cash = [p.opening_cash for p in plan.people]
     inv = [p.investments for p in plan.people]
+    pensions = [p.pension_opening_chf for p in plan.people]
 
     prop_val = 0.0
     mort = 0.0
@@ -235,15 +237,22 @@ def simulate(plan: Plan) -> SimResult:
             allowance[0 if recipient == plan.people[0].id else 1] += cost.allowance
         on_break = False
         break_one_off = [0.0, 0.0]
+        break_factors = [1.0, 1.0]
         for i, c in enumerate(comp):
             factor = 1.0
-            for (bs, be, pct, cost, lbl) in c["breaks"]:
+            for bs, be, career_break in c["breaks"]:
                 if bs <= t < be:
-                    factor = min(factor, pct)
-                if t == bs and cost > 0:
+                    factor = min(factor, career_break.income_pct / 100)
+                    if (t - bs) % 6 == 0 and career_break.semester_fee_chf:
+                        fee = career_break.semester_fee_chf
+                        break_one_off[i] += fee
+                        series[i].one_off_items.append((t, f"{career_break.label} semester fees", fee))
+                if t == bs and career_break.one_off_cost_chf:
+                    cost = career_break.one_off_cost_chf
                     break_one_off[i] += cost
-                    series[i].one_off_items.append((t, f"{lbl} costs", cost))
+                    series[i].one_off_items.append((t, f"{career_break.label} costs", cost))
             salary = usual[i] * factor
+            break_factors[i] = factor
             fraction, benefit = leave[i].get(t, (0.0, 0.0))
             earnings = salary * (1 - fraction) + benefit
             actual.append(earnings + c["bonus"] + allowance[i])
@@ -319,7 +328,7 @@ def simulate(plan: Plan) -> SimResult:
             c = comp[i]
             s.cash_open.append(cash[i])
             income = actual[i]
-            tax = a.tax_rate * (income - allowance[i])
+            tax = a.tax_rate * (income - allowance[i]) + p.income_tax_monthly
             spending = c["personal_budget"] * infl + (0.0 if cohabit else c["own_home_budget"] * infl)
             household = shares[i] * (hh_cost + moving)
             transfers[i] = household
@@ -343,7 +352,8 @@ def simulate(plan: Plan) -> SimResult:
                 + interest_income
             )
             cash[i] += net
-            inv[i] *= inv_growth
+            inv[i] *= inv_growth if investment_factors is None else investment_factors[t]
+            pensions[i] += p.pension_credit_monthly * break_factors[i]
             if purchase_now and own[i] > 0:
                 s.one_off_items.append((t, "Home deposit", deposit))
                 if fees_total:
@@ -367,11 +377,12 @@ def simulate(plan: Plan) -> SimResult:
             s.net_flow.append(net)
             s.cash.append(cash[i])
             s.investments.append(inv[i])
+            s.pension.append(pensions[i])
             loans_total = sum(max(0.0, l[0]) for l in c["loans"])
             s.loans.append(loans_total)
             s.household_share.append(shares[i])
             # Mortgage after this month's amortisation.
-            s.outgoings.append(spending + shares[i] * hh_cost + housing + amortization + loan_payment)
+            s.outgoings.append(tax + spending + shares[i] * hh_cost + housing + amortization + loan_payment)
 
         mort -= amort
         joint_bal += sum(transfers) - (hh_cost + moving)
@@ -384,7 +395,7 @@ def simulate(plan: Plan) -> SimResult:
             s = series[i]
             s.property_value.append(own[i] * pv_series[-1])
             s.mortgage.append(own[i] * mort_series[-1])
-            s.net_worth.append(s.cash[-1] + s.investments[-1] + s.property_value[-1] - s.mortgage[-1] - s.loans[-1])
+            s.net_worth.append(s.cash[-1] + s.investments[-1] + s.pension[-1] + s.property_value[-1] - s.mortgage[-1] - s.loans[-1])
 
     res = SimResult(
         plan=plan,
@@ -420,7 +431,7 @@ def verify(res: SimResult) -> dict:
             )
             flow_err = max(flow_err, abs((inflow - outflow) - s.net_flow[t]))
             cash_err = max(cash_err, abs(prev + s.net_flow[t] - s.cash[t]))
-            nw = s.cash[t] + s.investments[t] + s.property_value[t] - s.mortgage[t] - s.loans[t]
+            nw = s.cash[t] + s.investments[t] + s.pension[t] + s.property_value[t] - s.mortgage[t] - s.loans[t]
             nw_err = max(nw_err, abs(nw - s.net_worth[t]))
             prev = s.cash[t]
     transfer_err = max((abs(x) for x in res.joint_balance), default=0.0)

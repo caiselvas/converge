@@ -28,8 +28,95 @@ export interface CareerBreak {
   months: number;
   income_pct: number;
   one_off_cost_chf: number;
+  semester_fee_chf?: number;
+  study_program?: ProgramId | null;
+  post_study_pay_delta_chf?: number;
   label: string;
 }
+
+export type ProgramId = "quant_finance" | "fine_arts";
+
+export interface Program {
+  label: string;
+  school: string;
+  semesters: number;
+  semester_fee_chf: number;
+  source: string;
+  fees_source?: string;
+}
+
+export interface WhatIfRequest {
+  study?: {
+    person: string;
+    program: ProgramId;
+    start: Month;
+    income_pct: number;
+    semester_fee_chf: number;
+    extra_cost_chf: number;
+    monthly_pay_delta: number;
+  };
+  housing: {
+    arrangement: "current" | "separate" | "together";
+    move_in?: Month;
+    rent?: number;
+    split?: "equal" | "income" | "custom";
+    first_share?: number;
+    adjust_for_breaks?: boolean;
+    purchase?: "keep" | "exclude" | "include";
+  };
+  uncertainty?: { inflation_spread: number; investment_volatility: number };
+}
+
+export interface WhatIfLine {
+  id: string;
+  name: string;
+  cash_floor: number | null;
+  minimum_cash: number;
+  minimum_cash_month: Month;
+  end_cash: number;
+  end_net_worth: number;
+  buffer_gap: number | null;
+  change_in_minimum_cash?: number;
+  change_in_end_net_worth?: number;
+  net_worth_went_below_baseline?: boolean;
+  net_worth_break_even_month?: Month | null;
+  cash?: number[];
+  net_worth?: number[];
+}
+
+export interface WhatIfResult {
+  start: Month;
+  end: Month;
+  months?: Month[];
+  baseline: WhatIfLine[];
+  scenario: WhatIfLine[];
+  checks_passed: boolean;
+  issues: { title: string; person: string | null; severity: "hard" | "soft" }[];
+  inputs: {
+    study?: Omit<NonNullable<WhatIfRequest["study"]>, "program"> & {
+      name: string; program: string; duration_months: number; first_month_after_study: Month;
+      published_semester_fee_chf: number; source: string;
+    };
+    housing: WhatIfRequest["housing"]["arrangement"];
+    scenario_housing: Plan["shared"]["household"];
+    scenario_split: Plan["shared"]["split"];
+    scenario_home_purchase_enabled: boolean;
+    scenario_home_purchase?: { price: number; month: Month };
+  };
+  risk: {
+    trials: number;
+    seed: number;
+    inflation_spread: number;
+    investment_volatility: number;
+    baseline_breaches: number[];
+    scenario_breaches: number[];
+    baseline_worth: number[];
+    scenario_worth: number[];
+    paired_worth_delta: number[];
+  } | null;
+}
+
+export type WhatIfResponse = WhatIfResult & { draft_changes: Change[] };
 
 export interface Person {
   id: string;
@@ -45,6 +132,9 @@ export interface Person {
   opening_cash_date: Month;
   investments: number;
   investments_as_of: string;
+  income_tax_monthly: number;
+  pension_opening_chf: number;
+  pension_credit_monthly: number;
   liabilities: { id: string; kind: string; principal_chf: number }[];
   categories: Category[];
   emergency_floor: number;
@@ -226,7 +316,7 @@ export interface PlanEvent {
 }
 
 export type SeriesKey =
-  | "cash" | "investments" | "net_worth" | "income" | "family_allowance" | "tax" | "spending" | "household"
+  | "cash" | "investments" | "pension" | "net_worth" | "income" | "family_allowance" | "tax" | "spending" | "household"
   | "housing" | "amortization" | "one_off" | "deposit" | "net_flow" | "property_value" | "mortgage";
 
 export interface Evaluation {

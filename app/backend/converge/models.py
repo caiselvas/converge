@@ -39,6 +39,8 @@ class Model(BaseModel):
 
 CategoryGroup = Literal["housing", "essential", "flexible", "irregular"]
 Provenance = Literal["dataset", "derived", "user", "assumption"]
+StudyProgram = Literal["quant_finance", "fine_arts"]
+STUDY_SEMESTERS = {"quant_finance": 3, "fine_arts": 4}
 
 
 class Category(Model):
@@ -69,7 +71,18 @@ class CareerBreak(Model):
     months: int = Field(ge=1, le=36)
     income_pct: float = Field(0.0, ge=0, le=100, description="Share of usual net income received during the break")
     one_off_cost_chf: float = Field(0.0, ge=0, description="E.g. course fees, paid in the first month")
+    semester_fee_chf: float = Field(0.0, ge=0, le=100_000, description="Paid at the start and every six months during the break")
+    study_program: StudyProgram | None = None
+    post_study_pay_delta_chf: float = Field(0.0, ge=-50_000, le=50_000)
     label: str = "Career break"
+
+    @model_validator(mode="after")
+    def _study_duration(self) -> "CareerBreak":
+        if self.study_program and self.months != STUDY_SEMESTERS[self.study_program] * 6:
+            raise ValueError("study duration must match the selected programme")
+        if not self.study_program and self.post_study_pay_delta_chf:
+            raise ValueError("post-study pay requires a study programme")
+        return self
 
 
 class IncomeStep(Model):
@@ -102,6 +115,9 @@ class Person(Model):
     opening_cash_date: Month
     investments: float = Field(0.0, ge=0)
     investments_as_of: str = ""
+    income_tax_monthly: float = Field(0, ge=0, le=100_000, description="User budget for income taxes payable outside payroll")
+    pension_opening_chf: float = Field(0, ge=0, le=1e9, description="Vested occupational pension balance at plan start")
+    pension_credit_monthly: float = Field(0, ge=0, le=100_000, description="Monthly occupational pension credit at usual pay")
     liabilities: list[Liability] = []
     categories: list[Category]
     emergency_floor: float = Field(ge=0, description="Hard constraint: cash must never fall below this")
@@ -127,10 +143,15 @@ class Person(Model):
         return self
 
     def usual_net_income(self, month: str, start: str, growth: float) -> float:
+        from converge.engine import months as M
+
         year_offset = int(month[:4]) - int(start[:4])
         elapsed = 12 * year_offset + int(month[5:]) - int(start[5:])
         return self.income_monthly * (1 + growth) ** (max(0, elapsed) / 12) + sum(
             step.monthly_chf_delta for step in self.income_steps if step.start <= month
+        ) + sum(
+            b.post_study_pay_delta_chf for b in self.career_breaks
+            if b.post_study_pay_delta_chf and M.index(month, b.start) >= b.months
         )
 
 
@@ -227,17 +248,17 @@ class Plan(Model):
                 raise ValueError("child allowance recipient must be a partner")
             if {child.leave.birth_parent, child.leave.other_parent} != partner_ids:
                 raise ValueError("leave must name two distinct partners")
-        if any(p.income_steps for p in self.people):
+        with_income_changes = [p for p in self.people if p.income_steps or any(b.post_study_pay_delta_chf for b in p.career_breaks)]
+        if with_income_changes:
             from converge.engine.months import add
 
             a = self.assumptions
             for t in range(a.horizon_months):
                 month = add(a.start, t)
-                for p in self.people:
-                    if p.income_steps:
-                        income = p.usual_net_income(month, a.start, a.income_growth)
-                        if not math.isfinite(income) or income < 0:
-                            raise ValueError(f"income steps make {p.name}'s net income invalid in {month}")
+                for p in with_income_changes:
+                    income = p.usual_net_income(month, a.start, a.income_growth)
+                    if not math.isfinite(income) or income < 0:
+                        raise ValueError(f"income changes make {p.name}'s net income invalid in {month}")
         return self
 
     def person(self, pid: str) -> Person:

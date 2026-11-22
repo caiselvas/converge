@@ -103,7 +103,7 @@ def offline(text: str, question: dict | None = None) -> list[Item]:
 
     goal = next((slug for slug, terms in {
         "home": r"\b(buy|purchase|own|save for)\b.{0,30}\b(home|house|flat|apartment)\b",
-        "masters": r"\bmaster[’']?s\b",
+        "masters": r"\b(?:master[’']?s|(?:start|do|pursue|study for)\s+(?:a\s+)?master)\b",
         "sabbatical": r"\b(sabbatical|career break|time off)\b",
         "education": r"\b(save for|pay for|fund|study)\b.{0,30}\b(education|degree|course|university)\b",
         "family": r"\b(have|plan for|save for)\b.{0,20}\b(child|baby)\b",

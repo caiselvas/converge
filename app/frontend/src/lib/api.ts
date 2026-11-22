@@ -1,5 +1,6 @@
 import type {
-  AssumptionRow, Change, ExplainResponse, InterpretResponse, LlmProvider, Proposal, RecResponse, SimResponse, Stress, Workspace,
+  AssumptionRow, Change, ExplainResponse, InterpretResponse, LlmProvider, Program, ProgramId, Proposal, RecResponse,
+  SimResponse, Stress, WhatIfRequest, WhatIfResponse, Workspace,
 } from "./types";
 
 export const llmProviderLabel = { anthropic: "Claude", openai: "OpenAI" } satisfies Record<LlmProvider, string>;
@@ -35,6 +36,9 @@ export async function call<T>(path: string, init?: RequestInit & { json?: unknow
 export const api = {
   health: () => call<{ ok: boolean; llm_available: boolean; llm_model: string | null }>("/health"),
   workspace: () => call<Workspace>("/workspace"),
+  whatIfCatalogue: () => call<{ programs: Record<ProgramId, Program>; graduate_survey: string }>("/what-if"),
+  whatIf: (choice: WhatIfRequest, draft: Change[], signal?: AbortSignal) =>
+    call<WhatIfResponse>("/what-if", { json: { ...choice, draft }, signal }),
   simulate: (changes: Change[], signal?: AbortSignal, stress?: Stress) =>
     call<SimResponse>("/simulate", { json: { changes, stress }, signal }),
   recommendations: (changes: Change[], signal?: AbortSignal, stress?: Stress) =>
