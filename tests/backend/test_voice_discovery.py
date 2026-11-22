@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from converge import ai, config
 from converge.engine.changes import apply_changes
-from converge.engine.evaluate import chf, evaluate
+from converge.engine.evaluate import evaluate
 from converge.models import Change, Goal
 from converge.voice.extract import Candidates, extract, offline
 from converge.voice.memory import Item, Memory
@@ -63,47 +63,10 @@ def test_extraction_drops_bad_schema_and_evidence(session, monkeypatch):
     monkeypatch.setattr(ai, "_call_structured", lambda *args: output)
     items = turn(session, item()["quote"])["memory"]
     assert {(x["key"], x["kind"]) for x in items} == {
-        ("home", "fact"), ("home.date", "fact"), ("home.permission", "unknown"), ("home.risk", "inference"),
+        ("home.stated_goal", "fact"), ("home.date", "fact"), ("home.permission", "unknown"), ("home.risk", "inference"),
     }
     monkeypatch.setattr(ai, "_call_structured", lambda *args: (_ for _ in ()).throw(RuntimeError()))
-    assert any(i.key == "sabbatical" for i in asyncio.run(extract("I want a sabbatical.")))
-
-
-def test_question_order_stays_current_and_skips_sensitive_topics(session):
-    ask = lambda: execute_tool("next_question", {}, session)
-    assert ask()["key"] == "life_priorities"
-    turn(session, "I'm not sure.")
-    assert ask()["key"] == "life_priorities"
-    turn(session, "Prefer not to say")
-    assert ask()["key"] == "discovery"
-    turn(session, "I want to buy a home in 2029")
-    assert ask()["key"] == "home.why"
-    turn(session, "I'd like a stable place for our family.")
-    assert ask()["key"] == "home.amount"
-    for reply in ("I am not sure.", "Still thinking.", "I don't know."):
-        turn(session, reply)
-        assert ask()["key"] == "home.amount"
-    turn(session, "CHF 900k")
-    assert ask()["key"] == "home.date"
-    turn(session, "Spring 2029")
-    assert ask()["key"] == "home.date"
-    turn(session, "By June 2029")
-    result = ask()
-    assert result["key"] == "home.flexibility" and result["reaction"]
-    assert ask() == result
-    turn(session, "I'd postpone rather than reduce it.")
-    assert ask()["key"] == "home.partner_agreement"
-    turn(session, "We would need to agree on the neighbourhood.")
-    assert ask()["key"] == "home.priority"
-    turn(session, "High priority.")
-    assert ask()["key"] == "home.permission"
-    turn(session, "Prefer not to say")
-    assert ask()["key"] == "discovery"
-    turn(session, "Anything else?")
-    assert ask()["key"] == "discovery"
-    memory = {i["key"]: i for i in session.memory.items("B") if i["kind"] == "fact"}
-    assert memory["home.why"]["quote"] == "I'd like a stable place for our family."
-    assert memory["home.partner_agreement"]["quote"] == "We would need to agree on the neighbourhood."
+    assert any(i.key == "sabbatical.stated_goal" for i in asyncio.run(extract("I want a sabbatical.")))
 
 
 @pytest.mark.parametrize("reply", ["around 80000 francs", "about 80000", "around 80000 (francs)", "80k", "CHF 80'000"])
@@ -127,64 +90,6 @@ def test_offline_deadline_phrasings(reply, expected):
 def test_offline_flexibility_phrasings(reply, expected):
     [item] = offline(reply, {"key": "sabbatical.flexibility"})
     assert (item.key, item.value) == ("sabbatical.flexibility", expected)
-
-
-def test_two_goals_ask_which_comes_first_and_store_priority(session):
-    ask = lambda: execute_tool("next_question", {}, session)
-    assert ask()["key"] == "life_priorities"
-    turn(session, "Time with my family.")
-    assert ask()["key"] == "discovery"
-    turn(session, "I want to buy a home.")
-    assert ask()["key"] == "home.why"
-    turn(session, "I also want to take a sabbatical.")
-    assert ask()["key"] == "home.why"
-    turn(session, "I want a place to settle down.")
-    assert ask()["key"] == "sabbatical.why"
-    turn(session, "I want time to recover.")
-    question = ask()
-    assert question["key"] == "goal_tradeoff"
-    assert "Home" in question["question"] and "Sabbatical" in question["question"]
-    turn(session, "Sabbatical comes first.")
-    assert ask()["key"] != "goal_tradeoff"
-    facts = {i["key"]: i["value"] for i in session.memory.items("B") if i["kind"] == "fact"}
-    assert facts["sabbatical.priority"] == "high" and facts["home.priority"] == "low"
-
-
-def test_complete_goal_simulates_once_and_reacts_with_engine_result(session, monkeypatch):
-    from unittest.mock import Mock
-    from converge.voice import tools
-
-    spy = Mock(wraps=tools.execute_tool)
-    monkeypatch.setattr(tools, "execute_tool", spy)
-    assert execute_tool("next_question", {}, session)["key"] == "life_priorities"
-    turn(session, "I want more time for family.")
-    assert execute_tool("next_question", {}, session)["key"] == "discovery"
-    turn(session, "I want a sabbatical with around 800000 in May 2028")
-    question = execute_tool("next_question", {}, session)
-    assert question["key"] == "sabbatical.flexibility"
-    assert spy.call_count == 1 and spy.call_args.args[0] == "simulate_changes"
-    args = spy.call_args.args[1]
-    expected = evaluate(apply_changes(session.plan, [Change(**change) for change in args["changes"]]))
-    [goal] = expected["people"][1]["goals"]
-    assert question["reaction"] == next(result["after"]["speakable"] for result in session.memory.recent_tools(session.id) if "after" in result)
-    assert chf(goal["shortfall_chf"]) in question["reaction"] and "May 2028" in question["reaction"]
-    assert ground_turn(session, question["reaction"])
-    assert execute_tool("next_question", {}, session) == question
-    assert spy.call_count == 1 and not session.plan.person("B").goals
-
-
-def test_existing_profile_goal_skips_known_fields(session):
-    session.plan = apply_changes(session.plan, [Change(path="people.B.goals", value=[
-        Goal(id="s", name="Sabbatical", target_chf=20000, target_date="2028-02").model_dump()
-    ])])
-    turn(session, "I want a sabbatical.")
-    q = execute_tool("next_question", {}, session)
-    assert q["key"] == "life_priorities"
-    turn(session, "I want enough time for my family.")
-    assert execute_tool("next_question", {}, session)["key"] == "sabbatical.why"
-    turn(session, "I need time to reset.")
-    q = execute_tool("next_question", {}, session)
-    assert q["key"] == "sabbatical.flexibility" and q["reaction"]
 
 
 def test_goal_draft_requires_confirmed_complete_goal_and_no_mutation(session):
@@ -260,3 +165,94 @@ def test_confirmed_goal_updates_existing_goal_without_double_reserving_cash(sess
     [updated] = changes[0]["value"]
     assert updated["id"] == "existing" and updated["measure"] == "liquid"
     assert (updated["target_chf"], updated["target_date"]) == (15000, "2028-05")
+
+
+def test_gaps_reports_facts_unknowns_profile_and_skips(session):
+    turn(session, "I want a sabbatical with CHF 15k in spring 2028")
+    turn(session, "I prefer not to say.")
+    latest = session.memory.last_user(session.id)
+    session.memory.save(session.id, latest["id"], [Item.model_validate(item(
+        key="skip.constraints", dimension="risk_flexibility", value="opted out", quote=latest["text"]))])
+    gaps = execute_tool("get_gaps", {}, session)
+    assert set(gaps["dimensions"]) == {"goals", "priorities", "timelines", "feasibility", "risk_flexibility"}
+    assert not any(key in gaps for key in ["question", "reaction", "prompt"])
+    assert gaps["means_without_confirmed_objective"] == ["sabbatical"]
+    assert "constraints" in gaps["skipped_topics"] and "unspecified" in gaps["skipped_topics"]
+    assert "income" in gaps["known_from_profile"]["topics"]
+    goal = gaps["goals"]["sabbatical"]
+    assert "constraints" not in goal["unknown_fields"]
+    assert {"date", "underlying_objective", "simulation"} <= set(goal["unknown_fields"])
+
+
+def test_objective_requires_confirmation_in_the_users_own_words(session):
+    turn(session, "I want a sabbatical.")
+    text = "I think I'd like a bit more time with my kids."
+    turn(session, text)
+    objective = item(key="sabbatical.underlying_objective", value="more time with my kids", quote=text)
+    saved = execute_tool("save_memory", {"items": [objective, objective | {"kind": "inference"}]}, session)["memory"]
+    pending = next(i for i in saved if i["key"] == objective["key"])
+    assert pending["kind"] == "inference" and pending["status"] == "pending"
+    with pytest.raises(ValueError):
+        session.memory.resolve("B", pending["id"], "confirmed")
+    turn(session, "Yes, I want more time with my kids.")
+    confirmed = execute_tool("save_memory", {"items": [objective | {"quote": "more time with my kids"}]}, session)
+    matching = [i for i in confirmed["memory"] if i["key"] == objective["key"] and i["status"] == "confirmed"]
+    assert len(matching) == 1 and matching[0]["kind"] == "fact"
+    assert execute_tool("get_gaps", {}, session)["means_without_confirmed_objective"] == []
+
+
+def test_compare_paths_matches_independent_runs_and_reports_never(session):
+    change = {"path": "people.B.income_steps", "value": [
+        {"id": "raise", "label": "Expected net pay change", "start": "2027-04", "monthly_chf_delta": 1000},
+    ]}
+    inputs = [{"name": "baseline", "changes": []}, {"name": "alternative", "changes": [change]}]
+    actual = execute_tool("compare_paths", {"paths": inputs}, session)
+    for path, definition in zip(actual["paths"], inputs):
+        expected = evaluate(apply_changes(session.plan, [Change(**ch) for ch in definition["changes"]]))
+        assert path["verdict"] == expected["status"]
+        assert path["assumptions"]["value"] == [Change(**ch).model_dump() for ch in definition["changes"]]
+        assert [p["end_net_worth"] for p in path["people"]] == [p["end_net_worth"] for p in expected["people"]]
+        assert [p["min_cash"] for p in path["people"]] == [p["min_cash"] for p in expected["people"]]
+        assert [p["goals"] for p in path["people"]] == [p["goals"] for p in expected["people"]]
+    above = next(x for x in actual["overtakes"] if x["path"] == "alternative")
+    below = next(x for x in actual["overtakes"] if x["path"] == "baseline")
+    assert above["month"] == "2027-04" and ground_turn(session, above["speakable"])
+    assert below["month"] is None and below["status"] == "never within horizon"
+    assert not session.plan.person("B").income_steps
+
+
+def test_profile_provenance_for_ledger_figures_and_estimates(session):
+    read = lambda topic: execute_tool("get_profile", {"person": "Ben", "topic": topic}, session)
+    grocery = next(c for c in read("spending")["categories"] if c["key"] == "groceries")
+    assert grocery["observed_chf_monthly"] == {"value": 400.0, "provenance": "historical UBS data"}
+    assert grocery["budget_chf_monthly"]["provenance"] == "plan assumption"
+    assert read("income")["planned_net_chf_monthly"]["provenance"] == "plan assumption"
+    assert read("savings_rate")["cash_savings_rate_pct"]["provenance"] == "simulated"
+    assert read("balances")["opening_cash"]["provenance"] == "historical UBS data"
+    assert read("debts")["opening_liabilities"]["provenance"] == "historical UBS data"
+    assert read("goals")["outcomes"]["provenance"] == "simulated"
+    assert read("events")["plan_events"]["provenance"] == "plan assumption"
+
+
+def test_shared_home_profile_compares_configured_purchase_to_current_plan(session):
+    result = execute_tool("get_summary", {"scope": "together"}, session)
+    assert result["home"] is None
+    preview = result["configured_home_preview"]
+    engine = evaluate(apply_changes(session.plan, [Change(path="shared.property.enabled", value=True)]))
+    assert preview["home"]["affordability"]["passes"] == engine["property"]["affordability"]["passes"]
+    assert preview["home"]["affordability"]["ratio_pct"] == round(100 * engine["property"]["affordability"]["ratio"], 1)
+    assert [p["headroom"] for p in preview["people"]] == [p["headroom"] for p in engine["people"]]
+    assert [p["lowest_cash_change_chf"] for p in preview["people"]] == [
+        round(x["min_cash"] - y["min_cash"], 2) for x, y in zip(preview["people"], result["people"])
+    ]
+
+
+def test_gaps_associates_masters_alias_with_its_confirmed_objective(session):
+    turn(session, "I want to do a master's.")
+    text = "Yes, my objective is a better-paid job."
+    turn(session, text)
+    observation = item(key="master_degree.underlying_objective", quote="a better-paid job", value="a better-paid job")
+    execute_tool("save_memory", {"items": [observation]}, session)
+    gaps = execute_tool("get_gaps", {}, session)
+    assert gaps["goals"]["masters"]["confirmed_underlying_objective"] == "a better-paid job"
+    assert gaps["means_without_confirmed_objective"] == []

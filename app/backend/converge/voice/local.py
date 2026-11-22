@@ -128,8 +128,6 @@ async def say(session: Session, text: str, pipeline: Pipeline, send) -> None:
 
 
 async def run_turn(session: Session, pcm: bytes, pipeline: Pipeline, send, history: list[dict]) -> None:
-    from converge.voice.realtime import INSTRUCTIONS
-
     if not voiced(pcm):
         await send({"type": "state", "state": "listening"})
         return
@@ -139,12 +137,16 @@ async def run_turn(session: Session, pcm: bytes, pipeline: Pipeline, send, histo
         await send({"type": "state", "state": "listening"})
         return
     evidence = session.memory.add_turn(session.id, "user", text)
-    question = session.last_question
-    session.memory.save(session.id, evidence, offline(text, question), question)
+    session.memory.save(session.id, evidence, offline(text))
     await send({"type": "transcript", "speaker": "user", "text": text})
-    q = execute_tool("next_question", {}, session)
-    messages = [{"role": "system", "content": INSTRUCTIONS + "\nUse this next question if continuing discovery: " + json.dumps({"question": q["question"], "reaction": q.get("reaction")})},
-                *history[-8:], {"role": "user", "content": text}]
+    await respond(session, text, pipeline, send, history)
+
+
+async def respond(session: Session, text: str | None, pipeline: Pipeline, send, history: list[dict]) -> None:
+    from converge.voice.realtime import INSTRUCTIONS
+
+    messages = [{"role": "system", "content": INSTRUCTIONS}, *history[-8:],
+                {"role": "user", "content": text or "Open the coaching session naturally and introduce yourself as AI."}]
     for _ in range(4):
         message = await asyncio.to_thread(pipeline.llm, messages)
         calls = message.get("tool_calls") or []
@@ -152,7 +154,9 @@ async def run_turn(session: Session, pcm: bytes, pipeline: Pipeline, send, histo
             answer = str(message.get("content") or "").strip()[:1500]
             if not answer:
                 raise ValueError("The local model returned no reply.")
-            history.extend([{"role": "user", "content": text}, {"role": "assistant", "content": answer}])
+            if text is not None:
+                history.append({"role": "user", "content": text})
+            history.append({"role": "assistant", "content": answer})
             del history[:-8]
             await say(session, answer, pipeline, send)
             return
@@ -193,10 +197,7 @@ async def serve_socket(socket: WebSocket, session_id: str, get_plan) -> None:
     try:
         pipeline = await asyncio.wait_for(asyncio.to_thread(load_pipeline), timeout=max(0.1, expires - time()))
         session = Session(memory, session_id, get_plan())
-        question = execute_tool("next_question", {}, session)["question"]
-        intro = f"I'm the Converge AI discovery assistant. {question}"
-        await asyncio.wait_for(say(session, intro, pipeline, send), timeout=max(0.1, expires - time()))
-        history.append({"role": "assistant", "content": intro})
+        await asyncio.wait_for(respond(session, None, pipeline, send, history), timeout=max(0.1, expires - time()))
         deadline = min(expires, time() + config.VOICE_IDLE_SECONDS)
         while time() < deadline:
             event = await asyncio.wait_for(socket.receive(), timeout=max(0.1, deadline - time()))

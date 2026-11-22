@@ -40,6 +40,12 @@ cash_i[t]  = cash_i[t-1] + income − deduct − spending − household − hous
 - **Career break.** Income is multiplied by `income_pct` for the break's months, with optional one-off costs in the first month. Overlapping breaks are rejected.
 - **Net worth** = cash + investments + property share − mortgage share − loans. Liquidity (cash) is tracked separately.
 
+### Future net income scenarios
+
+A personal path can add dated `income_steps` with a user-assumed CHF/month delta and label. Each step adds a fixed nominal amount to grown regular net salary from its start month. Active steps stack; any scenario with a negative projected salary is rejected. Career break pay and other salary-based rules use the resulting income. Steps are assumptions. UBS data cannot estimate the salary effect of a degree, promotion or job change.
+
+The voice tool compares independently simulated paths over their common projected months. Net position is combined month-end net worth (cash, investments and property equity less other liabilities). The first strictly higher month counts as a lead, including the first projected month. Equal paths never overtake.
+
 ### Planning for a child
 
 - A shared plan can contain up to three children. Both partners approve changes. Everyday costs start in the birth month and go through the joint account with childcare, even if the partners live separately. The editable everyday budget starts at CHF 700 per month, including health insurance. Zurich discontinued its child-cost table in 2026. [Canton of Zurich notice](https://www.zh.ch/de/familie/eltern-in-trennung/unterhalt-elterliche-sorge/kinderkosten-tabelle.html)

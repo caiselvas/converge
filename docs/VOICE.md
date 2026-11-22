@@ -5,7 +5,7 @@ Voice lives in Ask on Overview, Goals and Expenses. It introduces itself as AI, 
 ## Architecture
 
 - **Transport.** Realtime uses browser-to-OpenAI WebRTC. The backend mints a short-lived secret and the browser relays tools and transcripts over the existing app API. Local mode uses a same-origin WebSocket, an AudioWorklet for 16 kHz PCM, a push-to-talk control, a server-side energy gate, faster-whisper, an OpenAI-compatible local chat server, and Piper. Both use the same tool dispatcher.
-- **Discovery.** `voice.sqlite3` lives in `CONVERGE_STATE_DIR`. Sessions, transcripts, memory, question history and recent tool facts are scoped to the viewer. Facts require a matching user quote. A pending inference can become confirmed when the viewer verifies it. Unknowns explain why the detail matters. Extraction uses the configured typed provider with an offline fallback. Local transport keeps extraction offline and can add pending observations through the local model’s tool calls.
+- **Discovery.** `voice.sqlite3` lives in `CONVERGE_STATE_DIR`. Sessions, transcripts, memory and recent tool facts are scoped to the viewer. Facts require a matching user quote. An underlying objective stays an inference until the viewer confirms it in their own words. Unknowns explain why the detail matters. Extraction uses the configured typed provider with an offline fallback. Local transport keeps extraction offline and can add pending observations through the local model’s tool calls.
 - **Plan tools.** `execute_tool` validates requests with Pydantic and applies the existing lever whitelist before evaluating changes. The model can compare a scenario before a goal is confirmed. A confirmed goal needs an amount and calendar month before it can be added to a draft. The normal DraftBar handles review and approvals.
 - **Grounding.** After each assistant turn, transcript numbers are compared against the recent engine responses. The app flags a mismatch and logs only the count. This lexical check can miss a wrong claim that reuses a correct number in a different context.
 
@@ -30,7 +30,7 @@ For a text-only session, from the repository root run:
 PYTHONPATH=app/backend app/backend/.venv/bin/python scripts/discovery_chat.py
 ```
 
-Use `--person P00809` to interview Emil or `--provider` to enable the configured extraction provider. The CLI is offline by default.
+Use `--person P00809` to interview Emil. The CLI uses the configured Anthropic or OpenAI provider and reports input and output tokens on exit.
 
 ### Phone and HTTPS
 
@@ -54,9 +54,9 @@ In a second terminal, use an installed, tool-capable Ollama model from `ollama l
 
 - Realtime uses `gpt-realtime-2.1-mini`, the cheapest maintained Realtime conversational model documented with tool calling. Voice defaults off. Local mode remains opt-in and loads only model files already on disk. [Model and pricing](https://developers.openai.com/api/docs/models/gpt-realtime-2.1-mini)
 - Scope affects the plan views and typed Ask. Voice memory follows **Viewing as**. Personal savings goals use the viewer’s goal list. A confirmed home purchase budget and month use shared property price and target-date levers. Scheduling the actual purchase is a separate plan decision.
-- The app starts with a goal, asks one missing detail at a time, and asks permission before risk comfort. It uses existing income, spending, balances and debts from the twin. It treats a year-only answer as incomplete until the viewer gives a month.
+- The coach answers the viewer’s questions first and uses `get_gaps` to see what still needs clarification. It chooses its own questions and checks the objective behind a stated goal. `get_profile` labels existing figures by provenance. `compare_paths` compares simulations and dates the lead under the assumptions supplied.
 - The browser stages a scenario only after the viewer clicks **Add to draft**. Confirmation changes memory only. A scenario that includes hypothetical personal goals can be simulated before confirmation without adding those goals to the draft.
-- Audio is transient. Realtime sends audio directly to OpenAI for processing. Hosted extraction sends the current transcript and question context to the configured provider. Converge stores only text and JSON in SQLite. **Clear discovery memory** deletes the selected viewer’s sessions, transcripts and memory in Converge. Provider-side handling follows the provider’s settings and policies.
+- Audio is transient. Realtime sends audio directly to OpenAI for processing. Hosted extraction sends the current transcript and recent conversational context to the configured provider. Converge stores only text and JSON in SQLite. **Clear discovery memory** deletes the selected viewer’s sessions, transcripts and memory in Converge. Provider-side handling follows the provider’s settings and policies.
 - The app mints at most ten Realtime or local admissions per process per rolling hour, counting failed startup attempts. A Realtime credential expires after 30 seconds. The browser releases audio on End, page hide, max duration or 30 seconds idle. The backend expires tool sessions and local sockets. OpenAI’s credential expiry limits when a call can start. Browser teardown applies the app cap to its Realtime connection.
 - Local mode uses push-to-talk with a short PCM buffer and an energy-based VAD. It streams transient WAV fragments back to the browser. Quality, language coverage and latency depend on the installed local models. Recommendation preference weighting is a follow-up.
 

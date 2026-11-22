@@ -13,7 +13,8 @@ from converge.engine.changes import apply_changes
 from converge.engine.evaluate import chf, evaluate
 from converge.engine.recommend import recommend
 from converge.models import Change, Goal, Month, Plan
-from converge.voice.controller import known_items, next_question
+from converge.voice.controller import get_gaps, goal_keys, known_items
+from converge.voice.finance import CompareArgs, ProfileArgs, compare_paths, profile
 from converge.voice.memory import Item, Memory
 
 log = logging.getLogger(__name__)
@@ -28,11 +29,6 @@ class Session:
     @property
     def person_id(self):
         return self.memory.person(self.id)
-
-    @property
-    def last_question(self):
-        history = self.memory.question_history(self.id)
-        return history[-1][1] if history else None
 
 
 class Empty(ai.StructuredOutput):
@@ -59,7 +55,7 @@ class MemoryArgs(ai.StructuredOutput):
 
 def summary(plan: Plan, person: str | None = None, *, focus: tuple[str, str] | None = None) -> dict:
     ev = evaluate(plan)
-    people = [{k: p[k] for k in ("id", "name", "min_cash", "min_cash_month", "goals")}
+    people = [{k: p[k] for k in ("id", "name", "min_cash", "min_cash_month", "floor", "headroom", "breach", "goals")}
               for p in ev["people"] if person is None or p["id"] == person]
     issues = [i for i in ev["issues"] if person is None or i["person"] == person]
     hard = next((i for i in issues if i["severity"] == "hard"), None)
@@ -85,21 +81,31 @@ def summary(plan: Plan, person: str | None = None, *, focus: tuple[str, str] | N
             speakable = "In this simulation, the home purchase is beyond the plan horizon."
         elif title == "Home" and ev["property"]:
             speakable = f"In this simulation, the home fits in {M.label(ev['property']['purchase'])}."
-    return dict(verdict=status, people=people, issues=[i["title"] for i in issues], speakable=speakable)
+    result = dict(verdict=status, people=people, issues=[i["title"] for i in issues], speakable=speakable,
+                  provenance="simulated")
+    if person is None:
+        home = ev["property"]
+        if home and (affordability := home.get("affordability")):
+            home = {**home, "affordability": {
+                **affordability,
+                "ratio_pct": round(100 * affordability["ratio"], 1) if affordability["ratio"] is not None else None,
+                "limit_pct": round(100 * affordability["max_ratio"], 1),
+            }}
+        result.update(home=home,
+                      home_assumptions={"value": plan.shared.property.model_dump(), "provenance": "plan assumption"})
+    return result
 
 
-def goal_changes(plan: Plan, person: str, items: list[dict], *, preview: tuple[str, dict] | None = None) -> list[Change]:
+def goal_changes(plan: Plan, person: str, items: list[dict]) -> list[Change]:
     from pydantic import TypeAdapter, ValidationError
 
-    known = preview[1] if preview else known_items(items, confirmed=True)
+    known = known_items(items, confirmed=True)
     personal = list(plan.person(person).goals)
     original = list(personal)
     changes = []
-    slugs = [preview[0]] if preview else dict.fromkeys(
-        item["key"] for item in items if item["dimension"] == "goals" and item["status"] == "confirmed"
-    )
+    slugs = goal_keys([item for item in items if item["status"] == "confirmed"])
     for slug in slugs:
-        title = known.get(slug)
+        title = known.get(f"{slug}.stated_goal", known.get(slug))
         amount = known.get(f"{slug}.amount")
         date = known.get(f"{slug}.date")
         if not isinstance(title, str) or not isinstance(amount, (float, int)) or not 0 < amount <= 1e9:
@@ -111,9 +117,6 @@ def goal_changes(plan: Plan, person: str, items: list[dict], *, preview: tuple[s
         if slug == "home":
             changes.extend([Change(path="shared.property.price", value=amount),
                             Change(path="shared.property.target_date", value=target)])
-            if preview:
-                changes.extend([Change(path="shared.property.enabled", value=True),
-                                Change(path="shared.property.purchase", value=target)])
             continue
         priority = known.get(f"{slug}.priority")
         existing = next((g for g in personal if g.id == f"discovery-{slug}" or g.name.casefold() == title.casefold()), None)
@@ -132,12 +135,14 @@ def goal_changes(plan: Plan, person: str, items: list[dict], *, preview: tuple[s
 
 
 TOOLS = {
-    "get_summary": (SummaryArgs, "Get the simulated verdict and lowest cash. Default scope is the viewer."),
+    "get_summary": (SummaryArgs, "Get simulated cash and goals. Use scope together for affordability, including the configured home preview and both cash buffers."),
     "simulate_changes": (ChangesArgs, "Compare the current plan to a hypothetical list of whitelisted changes."),
     "list_recommendations": (Empty, "List options verified by the simulation engine."),
     "propose_changes": (ProposalArgs, "Queue validated changes for review in the app. Use from_confirmed_goals for saved goals."),
     "save_memory": (MemoryArgs, "Save pending evidence-backed observations from the last user turn. The viewer confirms them in the app."),
-    "next_question": (Empty, "Get one next discovery question and any reaction from the simulation engine."),
+    "get_gaps": (Empty, "Get discovery coverage facts, confirmed objectives and opted-out topics. No suggested wording."),
+    "get_profile": (ProfileArgs, "Read the requested partner's existing financial figures with provenance. Omit person for the viewer."),
+    "compare_paths": (CompareArgs, 'Simulate two or three named paths with user-supplied or explicitly illustrative assumptions. Use the viewer ID from get_gaps or get_profile. For expected future pay set people.{pid}.income_steps to [{id,start,monthly_chf_delta,label}]. For temporary part-time pay and study fees use people.{pid}.career_breaks, value [{id,start,months,income_pct,one_off_cost_chf,label}]. Percentages there use 0–100, months use YYYY-MM.'),
 }
 
 
@@ -154,10 +159,21 @@ def execute_tool(name: str, args: dict, session: Session) -> dict:
     session.plan.person(person)
     if isinstance(parsed, SummaryArgs):
         result = summary(session.plan, person if parsed.scope == "personal" else None)
+        if parsed.scope == "together" and not session.plan.shared.property.enabled:
+            hypothetical = apply_changes(session.plan, [Change(path="shared.property.enabled", value=True)])
+            preview = summary(hypothetical, focus=(person, "Home"))
+            baseline = {p["id"]: p for p in result["people"]}
+            for p in preview["people"]:
+                p["lowest_cash_change_chf"] = round(p["min_cash"] - baseline[p["id"]]["min_cash"], 2)
+            result["configured_home_preview"] = preview
+    elif isinstance(parsed, ProfileArgs):
+        result = profile(session.plan, parsed.person or person, parsed.topic)
+    elif isinstance(parsed, CompareArgs):
+        result = compare_paths(session.plan, parsed)
     elif name == "simulate_changes":
         after = apply_changes(session.plan, parsed.changes)
         focus = (person, parsed.focus_goal) if parsed.focus_goal else None
-        result = dict(before=summary(session.plan), after=summary(after, focus=focus))
+        result = dict(before=summary(session.plan), after=summary(after, focus=focus), focus_goal=parsed.focus_goal)
         if not any(ch.path.startswith("people.") and ".goals" in ch.path for ch in parsed.changes):
             result["draft_changes"] = [ch.model_dump() for ch in parsed.changes]
     elif name == "list_recommendations":
@@ -178,27 +194,21 @@ def execute_tool(name: str, args: dict, session: Session) -> dict:
         last = session.memory.last_user(session.id)
         if not last:
             raise ValueError("Wait for a user turn before saving memory.")
-        return dict(memory=session.memory.save(session.id, last["id"], parsed.items, session.last_question))
+        return dict(memory=session.memory.save(session.id, last["id"], parsed.items))
     else:
-        def simulate_goal(slug: str, fields: dict) -> str:
-            changes = goal_changes(session.plan, person, [], preview=(slug, fields))
-            result = execute_tool("simulate_changes", {
-                "changes": [ch.model_dump() for ch in changes], "focus_goal": fields[slug],
-            }, session)
-            return result["after"]["speakable"]
-
-        question = next_question(session.memory, session.id, session.plan, simulate_goal)
-        if question.get("reaction"):
-            session.memory.record_tool(session.id, {"reaction": question["reaction"]})
-        return {k: v for k, v in question.items() if k not in {"previews", "skipped", "goal_keys"}}
+        return get_gaps(session.memory, session.id, session.plan.person(person))
     session.memory.record_tool(session.id, {key: value for key, value in result.items() if key != "draft_changes"})
     return result
 
 
-def ground_turn(session: Session, text: str, before: list[dict] | None = None) -> bool:
+def unmatched_numbers(session: Session, text: str, before: list[dict] | None = None) -> list[float]:
     known = ai._fact_numbers(session.memory.recent_tools(session.id) if before is None else before)
-    ungrounded = [n for n in ai._numbers_in(text)
-                 if not any(abs(n - k) < 0.005 or abs(n - round(k)) < 0.005 for k in known)]
+    return [n for n in ai._numbers_in(text)
+            if not any(abs(n - k) < 0.005 or abs(n - round(k)) < 0.005 for k in known)]
+
+
+def ground_turn(session: Session, text: str, before: list[dict] | None = None) -> bool:
+    ungrounded = unmatched_numbers(session, text, before)
     if ungrounded:
         log.warning("Discovery transcript had %d ungrounded numeric claim(s)", len(ungrounded))
     return not ungrounded

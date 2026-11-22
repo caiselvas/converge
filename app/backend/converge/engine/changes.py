@@ -39,6 +39,7 @@ class Lever:
 
 LEVERS: list[Lever] = [
     Lever("people.{pid}.categories.{key}.budget_monthly", "{category}", "CHF/month", "person", "Monthly budget for a spending category"),
+    Lever("people.{pid}.income_steps", "Future net income changes", "income_steps", "person", "User-assumed CHF/month deltas from dated start months"),
     Lever("people.{pid}.income_monthly", "Net income", "CHF/month", "person", "Usual monthly net income"),
     Lever("people.{pid}.include_bonus", "Count observed bonus", "bool", "person"),
     Lever("people.{pid}.emergency_floor", "Minimum safety buffer", "CHF", "person", "Hard floor for personal cash"),
@@ -200,6 +201,9 @@ def format_value(unit: str, v: Any) -> str:
         return f"{int(v)} months"
     if unit == "bool":
         return "On" if v else "Off"
+    if unit == "income_steps" and isinstance(v, list):
+        return "; ".join(f"{step['label']} · {format_value('CHF/month', step['monthly_chf_delta'])} from {M.label(step['start'])}"
+                         for step in v) or "None"
     if unit == "children" and isinstance(v, list):
         return "; ".join(
             f"{child.label} · {M.label(child.birth)} · {child.childcare_days_per_week:g} Kita days/week"

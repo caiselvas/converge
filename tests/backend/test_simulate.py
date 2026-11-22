@@ -243,3 +243,31 @@ def test_twins_share_leave_days_but_each_receive_an_allowance(simple_plan):
     assert both.people[1].family_allowance[0] == 2 * one.people[1].family_allowance[0]
     assert both.people[1].income[0] - one.people[1].income[0] == 215
     assert both.joint_in[4] == pytest.approx(2 * one.joint_in[4])
+
+
+def test_income_steps_are_dated_additive_and_preserve_cash_identity(simple_plan):
+    steps = [
+        {"id": "new-role", "start": "2027-03", "monthly_chf_delta": 1200, "label": "Assumed new role"},
+        {"id": "hours", "start": "2027-05", "monthly_chf_delta": -300, "label": "Assumed hours change"},
+    ]
+    plan = apply_changes(simple_plan, [C("people.B.income_steps", steps)])
+    res = simulate(plan)
+    old = simulate(simple_plan)
+    ben = res.people[1]
+    assert ben.income[:6] == pytest.approx([6000, 6000, 7200, 7200, 6900, 6900])
+    assert ben.cash[5] - old.people[1].cash[5] == pytest.approx(4200)
+    assert all(ben.cash[t] == pytest.approx(ben.cash_open[t] + ben.net_flow[t]) for t in range(len(res.months)))
+    assert res.checks["ok"] and res.checks["flow_sum_max_error"] < 1e-6
+
+
+@pytest.mark.parametrize("changes", [
+    {"start": "2027-14"},
+    {"monthly_chf_delta": -7000},
+    {"monthly_chf_delta": float("inf")},
+])
+def test_income_steps_reject_invalid_month_or_income(simple_plan, changes):
+    row = {"id": "step", "start": "2027-03", "monthly_chf_delta": 1000, "label": "Assumption"}
+    with pytest.raises(ValueError):
+        apply_changes(simple_plan, [C("people.B.income_steps", [row | changes])])
+    with pytest.raises(ValueError, match="unique"):
+        apply_changes(simple_plan, [C("people.B.income_steps", [row, row])])

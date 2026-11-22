@@ -86,13 +86,11 @@ export async function connectRealtime({ session, stream, signal, activity, state
   let queue = Promise.resolve();
   let revision = 0;
   let rounds = 0;
-  const respond = (askFirst = false) => send(askFirst
-    ? { type: "response.create", response: { tool_choice: { type: "function", name: "next_question" } } }
-    : { type: "response.create" });
+  const respond = () => send({ type: "response.create" });
   channel.onopen = () => {
     activity();
     state("listening");
-    respond(true);
+    respond();
   };
   channel.onclose = () => { if (!signal.aborted) error("Voice connection ended."); };
   channel.onmessage = ({ data }) => {
@@ -113,7 +111,7 @@ export async function connectRealtime({ session, stream, signal, activity, state
           activity();
           rounds = 0;
           if (event.transcript?.trim()) await transcript("user", event.transcript);
-          if (turn === revision) respond(true);
+          if (turn === revision) respond();
           break;
         case "conversation.item.input_audio_transcription.failed":
           error("Voice could not transcribe the last turn.");

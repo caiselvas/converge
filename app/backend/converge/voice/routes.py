@@ -38,17 +38,19 @@ class ToolCall(SessionBody):
     draft: list[Change] = Field(default_factory=list, max_length=200)
 
 
-async def ingest_turn(session: Session, speaker: str, text: str) -> dict:
+async def ingest_turn(session: Session, speaker: str, text: str, *, usage=None) -> dict:
     person = session.person_id
     text = text.strip()
     if not text:
         raise ValueError("Transcript is empty.")
     grounded = ground_turn(session, text) if speaker == "assistant" else True
-    last_question = session.last_question
+    context = {"recent_turns": session.memory.recent_turns(session.id)}
     evidence = session.memory.add_turn(session.id, speaker, text, not grounded)
     items = session.memory.items(person)
     if speaker == "user":
-        items = session.memory.save(session.id, evidence, await extract(text, last_question), last_question)
+        context["goal_keys"] = [i["key"] for i in items if i["key"].endswith(".stated_goal") and i["status"] != "rejected"]
+        extracted = await extract(text, context, **({"usage": usage} if usage is not None else {}))
+        items = session.memory.save(session.id, evidence, extracted)
     return dict(memory=items, grounded=grounded)
 
 

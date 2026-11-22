@@ -6,6 +6,7 @@ Rates are decimals per **year** (0.018 = 1.8% p.a.).
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Annotated, Literal
 
@@ -71,6 +72,13 @@ class CareerBreak(Model):
     label: str = "Career break"
 
 
+class IncomeStep(Model):
+    id: str = Field(min_length=1, max_length=80)
+    start: Month
+    monthly_chf_delta: float = Field(allow_inf_nan=False)
+    label: str = Field(min_length=1, max_length=120)
+
+
 class Liability(Model):
     id: str
     kind: str
@@ -99,6 +107,7 @@ class Person(Model):
     emergency_floor: float = Field(ge=0, description="Hard constraint: cash must never fall below this")
     goals: list[Goal] = []
     career_breaks: list[CareerBreak] = []
+    income_steps: list[IncomeStep] = Field(default_factory=list, max_length=24)
 
     @model_validator(mode="after")
     def _no_overlapping_breaks(self) -> "Person":
@@ -113,7 +122,16 @@ class Person(Model):
                 raise ValueError("career breaks of one person must not overlap")
         if len({b.id for b in self.career_breaks}) != len(self.career_breaks):
             raise ValueError("career break ids must be unique")
+        if len({step.id for step in self.income_steps}) != len(self.income_steps):
+            raise ValueError("income step ids must be unique")
         return self
+
+    def usual_net_income(self, month: str, start: str, growth: float) -> float:
+        year_offset = int(month[:4]) - int(start[:4])
+        elapsed = 12 * year_offset + int(month[5:]) - int(start[5:])
+        return self.income_monthly * (1 + growth) ** (max(0, elapsed) / 12) + sum(
+            step.monthly_chf_delta for step in self.income_steps if step.start <= month
+        )
 
 
 class Household(Model):
@@ -209,6 +227,17 @@ class Plan(Model):
                 raise ValueError("child allowance recipient must be a partner")
             if {child.leave.birth_parent, child.leave.other_parent} != partner_ids:
                 raise ValueError("leave must name two distinct partners")
+        if any(p.income_steps for p in self.people):
+            from converge.engine.months import add
+
+            a = self.assumptions
+            for t in range(a.horizon_months):
+                month = add(a.start, t)
+                for p in self.people:
+                    if p.income_steps:
+                        income = p.usual_net_income(month, a.start, a.income_growth)
+                        if not math.isfinite(income) or income < 0:
+                            raise ValueError(f"income steps make {p.name}'s net income invalid in {month}")
         return self
 
     def person(self, pid: str) -> Person:

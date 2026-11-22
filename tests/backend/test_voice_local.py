@@ -31,6 +31,8 @@ def test_local_socket_stt_tool_llm_tts_and_text_memory(simple_plan, tmp_path, mo
     keyframes = [b"first-wave", b"second-wave"]
 
     def llm(messages):
+        if len(messages) == 2 and messages[-1]["role"] == "user":
+            return {"content": "I am the demo AI."}
         if messages[-1]["role"] != "tool":
             return {"tool_calls": [{"id": "check", "function": {"name": "get_summary", "arguments": "{}"}}]}
         facts = json.loads(messages[-1]["content"])
@@ -46,7 +48,7 @@ def test_local_socket_stt_tool_llm_tts_and_text_memory(simple_plan, tmp_path, mo
         assert "token" not in session
         with client.websocket_connect(session["socket_path"]) as socket:
             greeting = socket.receive_json()["text"]
-            assert "AI discovery assistant" in greeting and "Over the next five years" in greeting
+            assert greeting == "I am the demo AI."
             assert socket.receive_json()["state"] == "speaking"
             assert socket.receive_json()["state"] == "listening"
             socket.send_json({"type": "start"})
@@ -62,7 +64,7 @@ def test_local_socket_stt_tool_llm_tts_and_text_memory(simple_plan, tmp_path, mo
             assert socket.receive_json()["speaker"] == "user"
             result = socket.receive_json()
             assert result["speaker"] == "assistant" and result["grounded"] is True
-            assert any(item["key"] == "sabbatical" for item in result["memory"])
+            assert any(item["key"] == "sabbatical.stated_goal" for item in result["memory"])
             assert socket.receive_json()["state"] == "speaking"
             assert [socket.receive_bytes(), socket.receive_bytes()] == keyframes
             assert socket.receive_json()["state"] == "listening"

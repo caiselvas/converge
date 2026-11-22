@@ -136,11 +136,13 @@ def _child_flows(plan: Plan, months: list[str]) -> tuple[dict[str, list[ChildMon
                 childcare = child.childcare_days_per_week * 4.2 * tariff * inflation
             allowance = CHILD_ALLOWANCE_BASE if age <= 144 else CHILD_ALLOWANCE_OLDER if age <= 192 else 0.0
             series[t] = ChildMonth(child.everyday_cost_monthly * inflation, childcare, allowance)
+        if birth >= len(months):
+            continue
         for parent, available in (
             (child.leave.birth_parent, BIRTH_LEAVE_DAYS), (child.leave.other_parent, OTHER_PARENT_LEAVE_DAYS),
         ):
             i = positions[parent]
-            salary = plan.people[i].income_monthly * (1 + a.income_growth) ** (max(0, birth) / 12)
+            salary = plan.people[i].usual_net_income(months[max(0, birth)], a.start, a.income_growth)
             rate = min(LEAVE_DAILY_CAP, LEAVE_REPLACEMENT * salary / 30)
             t = birth
             while available > 0 and t < len(months):
@@ -218,12 +220,11 @@ def simulate(plan: Plan) -> SimResult:
 
     for t in range(H):
         infl = (1 + a.expense_inflation) ** (t / 12)
-        growth = (1 + a.income_growth) ** (t / 12)
         cohabit = cohabit_idx is not None and t >= cohabit_idx
         owned = purchase_idx is not None and t >= purchase_idx
 
         # --- incomes
-        usual = [p.income_monthly * growth for p in plan.people]
+        usual = [p.usual_net_income(months[t], a.start, a.income_growth) for p in plan.people]
         actual = []
         allowance = [0.0, 0.0]
         everyday = childcare = 0.0

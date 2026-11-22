@@ -183,10 +183,10 @@ export function VoicePanel({ person, active, setActive }: { person: string; acti
             <div className="min-w-0">
               <p className="break-words"><b>{item.key.replaceAll("_", " ").replace(".", " · ")}</b> {item.value ?? item.why}</p>
               {item.quote && <q className="text-[12px] text-muted">{item.quote}</q>}
-              <p className="text-[11px] text-muted">{item.status === "confirmed" ? "Confirmed" : item.kind === "unknown" ? "Unknown" : "To confirm"}</p>
+              <p className="text-[11px] text-muted">{item.status === "confirmed" ? "Confirmed" : item.kind === "unknown" ? "Unknown" : item.key.endsWith(".underlying_objective") ? "Confirm in your own words" : "To confirm"}</p>
             </div>
             {item.status === "pending" && <div className="flex shrink-0 flex-col gap-1 text-[11px]">
-              {item.kind !== "unknown" && <button type="button" className="text-accent" onClick={() => void resolve(item.id, "confirm")}>Confirm</button>}
+              {item.kind !== "unknown" && !item.key.endsWith(".underlying_objective") && <button type="button" className="text-accent" onClick={() => void resolve(item.id, "confirm")}>Confirm</button>}
               <button type="button" className="text-muted" onClick={() => void resolve(item.id, "reject")}>Reject</button>
             </div>}
           </li>)}

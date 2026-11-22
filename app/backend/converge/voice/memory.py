@@ -16,6 +16,15 @@ Dimension = Literal["goals", "priorities", "timelines", "feasibility", "risk_fle
 Kind = Literal["fact", "inference", "unknown"]
 
 
+GOAL_ALIASES = {"master": "masters", "master_degree": "masters", "masters_degree": "masters",
+                "buy_home": "home", "home_purchase": "home"}
+
+
+def canonical_key(key: str) -> str:
+    slug, dot, field = key.partition(".")
+    return GOAL_ALIASES.get(slug, slug) + dot + field
+
+
 class Item(StructuredOutput):
     dimension: Dimension
     key: str = Field(pattern=r"^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)?$", max_length=80)
@@ -116,27 +125,37 @@ class Memory:
             row = db.execute("SELECT text FROM utterances WHERE id=? AND session_id=? AND speaker='user'",
                              (evidence, session)).fetchone()
             for item in items:
+                key = canonical_key(item.key)
+                if key != item.key:
+                    item = item.model_copy(update={"key": key})
                 if item.kind != "unknown" and row is None:
                     continue
                 if item.quote and (row is None or item.quote not in row["text"]):
                     continue
                 if item.kind == "fact" and not supported_fact(item, row["text"], question):
                     continue
-                db.execute("""INSERT OR IGNORE INTO memory_items(person_id,dimension,key,value,kind,confidence,
-                    evidence_utterance_id,quote,why) VALUES(?,?,?,?,?,?,?,?,?)""",
+                confirmed = item.kind == "fact" and item.key.endswith((".underlying_objective", ".decision_status"))
+                status = "confirmed" if confirmed else "pending"
+                db.execute("""INSERT INTO memory_items(person_id,dimension,key,value,kind,confidence,
+                    evidence_utterance_id,quote,why,status) VALUES(?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(person_id,dimension,key,value,kind) DO UPDATE SET
+                      status=excluded.status, quote=excluded.quote, evidence_utterance_id=excluded.evidence_utterance_id
+                    WHERE excluded.status='confirmed'""",
                            (person, item.dimension, item.key, json.dumps(item.value), item.kind,
-                            item.confidence, evidence, item.quote, item.why))
+                            item.confidence, evidence, item.quote, item.why, status))
         return self.items(person)
 
     def items(self, person: str) -> list[dict]:
         with self.db() as db:
             rows = db.execute("SELECT * FROM memory_items WHERE person_id=? ORDER BY id", (person,)).fetchall()
-        return [dict(row) | {"value": json.loads(row["value"])} for row in rows]
+        return [dict(row) | {"key": canonical_key(row["key"]), "value": json.loads(row["value"])} for row in rows]
 
     def resolve(self, person: str, item_id: int, status: Literal["confirmed", "rejected"]) -> list[dict]:
         with self.db() as db:
             n = db.execute("""UPDATE memory_items SET status=? WHERE person_id=? AND id=?
-                AND (kind!='unknown' OR ?='rejected')""", (status, person, item_id, status)).rowcount
+                AND (kind!='unknown' OR ?='rejected')
+                AND (kind='fact' OR key NOT LIKE '%.underlying_objective' OR ?='rejected')""",
+                           (status, person, item_id, status, status)).rowcount
         if not n:
             raise ValueError("Memory item cannot be updated for this viewer.")
         return self.items(person)
@@ -151,12 +170,11 @@ class Memory:
             rows = db.execute("SELECT turn,result FROM questions WHERE session_id=? ORDER BY turn", (session,)).fetchall()
         return [(r["turn"], json.loads(r["result"])) for r in rows]
 
-    def question(self, session: str, turn: int, result: dict):
+    def recent_turns(self, session: str, limit: int = 6) -> list[dict]:
         with self.db() as db:
-            db.execute("INSERT OR IGNORE INTO questions VALUES(?,?,?,?)",
-                       (session, turn, result["key"], json.dumps(result)))
-            row = db.execute("SELECT result FROM questions WHERE session_id=? AND turn=?", (session, turn)).fetchone()
-        return json.loads(row[0])
+            rows = db.execute("SELECT speaker,text FROM utterances WHERE session_id=? ORDER BY id DESC LIMIT ?",
+                              (session, limit)).fetchall()
+        return [dict(row) for row in reversed(rows)]
 
     def record_tool(self, session: str, result: dict):
         with self.db() as db:
