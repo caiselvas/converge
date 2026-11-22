@@ -5,8 +5,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from converge import api, config
+from converge.engine.evaluate import evaluate
+from converge.models import CareerBreak
 from converge.store import Store
-from converge.voice import realtime
+from converge.voice import realtime, routes
 
 
 @pytest.fixture
@@ -35,7 +37,7 @@ def test_mint_contract_and_cache_control(voice_api, monkeypatch):
     assert request["session"]["audio"]["input"]["turn_detection"]["create_response"] is False
     assert {t["name"] for t in request["session"]["tools"]} == {
         "get_summary", "simulate_changes", "list_recommendations", "propose_changes", "save_memory",
-        "get_gaps", "get_profile", "compare_paths", "education_programs", "explore_what_if",
+        "get_gaps", "get_profile", "compare_paths", "education_programs", "explore_what_if", "compare_study",
     }
 
 
@@ -61,3 +63,38 @@ def test_rate_limit_and_bad_provider_reply(voice_api, monkeypatch):
     limit = realtime.SessionLimit()
     assert all(limit.take(10) for _ in range(10))
     assert not limit.take(3609) and limit.take(3610)
+
+
+def test_call_runs_study_against_existing_break_and_updates_answered_inputs(voice_api, monkeypatch, simple_plan):
+    async def extract_locally(_text, _context):
+        return []
+
+    monkeypatch.setattr(routes, "extract", extract_locally)
+    plan = simple_plan
+    plan.people[0].career_breaks = [CareerBreak(
+        id="leave", label="Planned leave", start="2027-10", months=6, income_pct=20,
+    )]
+    session = voice_api.post("/api/twin/session", json={"person": "A"}).json()["session_id"]
+
+    def say(text):
+        reply = voice_api.post("/api/twin/ingest", json={
+            "session_id": session, "speaker": "user", "text": text, "preview_study": True,
+        })
+        assert reply.status_code == 200
+        return reply.json()
+
+    first = say("I want to study Quantitative Finance in September 2027.")["study_preview"]
+    assert first["checks_passed"]
+    assert len(first["scenario"][0]["cash"]) == len(first["months"])
+    assert first["inputs"]["study"]["income_pct"] == 30
+    assert "take-home pay during study" in first["assumed_inputs"]
+    assert first["inputs"]["study"]["replaced_breaks"] == [{"label": "Planned leave", "start": "2027-10", "months": 6}]
+    assert first["baseline"][0]["minimum_cash"] == evaluate(plan)["people"][0]["min_cash"]
+
+    second = say("Fifty percent.")["study_preview"]
+    assert second["inputs"]["study"]["start"] == "2027-09"
+    assert second["inputs"]["study"]["income_pct"] == 50
+    assert "take-home pay during study" not in second["assumed_inputs"]
+    assert second["baseline"] == first["baseline"]
+    assert "study_preview" not in say("What if we buy a house together?")
+    assert voice_api.get("/api/workspace").json()["plan"]["people"][0]["career_breaks"][0]["id"] == "leave"

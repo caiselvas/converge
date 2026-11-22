@@ -63,12 +63,18 @@ def mint_client_secret(client=None) -> dict:
                 "expires_after": {"anchor": "created_at", "seconds": 30},
                 "session": {
                     "type": "realtime", "model": MODEL,
-                    "instructions": INSTRUCTIONS + "\nOn this call, give the main result in two short sentences at a time. If a key date or amount sounded unclear, ask the caller to repeat it.",
+                    "instructions": INSTRUCTIONS + (
+                        "\nCall workflow overrides the discovery order above. Once a caller names a programme, start with a first-pass comparison. "
+                        "Use a study comparison already supplied by the app, or call compare_study directly without preliminary lookups. "
+                        "Use the caller's known inputs and allow the engine to fill the rest. Say what was assumed, give one result, "
+                        "then ask which assumption they would change. Keep replies brief. Don't announce a tool before it runs. "
+                        "If no programme is clear, ask which one. Use explore_what_if for combined housing-and-study scenarios."
+                    ),
                     "max_output_tokens": 2400, "tracing": None, "tool_choice": "auto",
                     "tools": definitions(),
                     "audio": {
                         "input": {
-                            "transcription": {"model": "gpt-4o-transcribe", "prompt": "Converge financial planning. Swiss francs (CHF), cash buffer, net worth, Quantitative Finance, Fine Arts, master's degree, Nina, Emil."},
+                            "transcription": {"model": "gpt-4o-transcribe"},
                             "turn_detection": {"type": "server_vad", "create_response": False,
                                                "interrupt_response": False, "prefix_padding_ms": 450,
                                                "silence_duration_ms": 700, "threshold": 0.45},

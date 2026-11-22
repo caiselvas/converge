@@ -16,11 +16,12 @@ from converge import config
 from converge.ai import StructuredOutput
 from converge.engine.changes import apply_changes
 from converge.engine.evaluate import chf
-from converge.engine.what_if import PROGRAMS
+from converge.engine.what_if import PROGRAMS, compact_comparison
 from converge.models import Change
 from converge.voice.agent import complete, provider, run_tools
 from converge.voice.extract import extract, offline
 from converge.voice.memory import Memory
+from converge.voice.study import StudyPreviewArgs, study_preview
 from converge.voice.tools import Session, execute_tool, ground_turn
 
 log = logging.getLogger(__name__)
@@ -58,12 +59,15 @@ class SessionBody(StructuredOutput):
 class Ingest(SessionBody):
     speaker: Literal["user", "assistant"]
     text: str = Field(min_length=1, max_length=4000)
+    preview_study: bool = False
+    draft: list[Change] = Field(default_factory=list, max_length=200)
 
 
 class ToolCall(SessionBody):
     name: str
     args: dict = Field(default_factory=dict)
     draft: list[Change] = Field(default_factory=list, max_length=200)
+    include_series: bool = False
 
 
 class ChatTurn(SessionBody):
@@ -124,11 +128,23 @@ def router_for(get_plan):
     @router.post("/api/twin/ingest")
     async def ingest(body: Ingest):
         try:
-            session = Session(memory_db(), body.session_id, get_plan())
-            viewer(session.person_id)
-            return await ingest_turn(session, body.speaker, body.text)
+            plan = get_plan()
+            session = Session(memory_db(), body.session_id, plan)
+            person = viewer(session.person_id)
+            result = await ingest_turn(session, body.speaker, body.text)
         except ValueError as error:
             raise HTTPException(422, str(error)) from None
+        if body.preview_study and body.speaker == "user":
+            turns = [t["text"] for t in session.memory.recent_turns(session.id, limit=12) if t["speaker"] == "user"]
+            try:
+                preview = study_preview(apply_changes(plan, body.draft) if body.draft else plan, person.id, turns,
+                                        StudyPreviewArgs(), automatic=True, include_series=True)
+                if preview:
+                    session.memory.record_tool(session.id, compact_comparison(preview))
+                    result["study_preview"] = preview
+            except ValueError as error:
+                result["study_preview_error"] = str(error)
+        return result
 
     @router.post("/api/twin/tool")
     def tool(body: ToolCall):
@@ -136,8 +152,9 @@ def router_for(get_plan):
             plan = apply_changes(get_plan(), body.draft) if body.draft else get_plan()
             session = Session(memory_db(), body.session_id, plan)
             viewer(session.person_id)
-            return execute_tool(body.name, body.args, session)
+            return execute_tool(body.name, body.args, session, include_series=body.include_series)
         except ValueError as error:
+            log.info("Finance tool %s rejected input (%s)", body.name if body.name.isidentifier() else "unknown", type(error).__name__)
             raise HTTPException(422, str(error)) from None
 
     @router.get("/api/twin/chat")
@@ -191,7 +208,7 @@ def router_for(get_plan):
                     emit({"type": "tool", "id": tool_id, "name": name, "status": "failed" if "error" in result else "done"})
                 if name == "propose_changes" and result.get("draft_changes"):
                     proposed[:] = result["draft_changes"]
-                comparison = result if name == "explore_what_if" and "scenario" in result else result.get("comparison")
+                comparison = result if name in {"compare_study", "explore_what_if"} and "scenario" in result else result.get("comparison")
                 if comparison:
                     evidence_cards.append({key: value for key, value in comparison.items() if key != "draft_changes"})
                 if isinstance(result.get("speakable"), str):

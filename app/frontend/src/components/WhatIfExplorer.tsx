@@ -8,8 +8,10 @@ import { CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, Responsiv
 import { api } from "@/lib/api";
 import { addMonths, chf, chfShort, monthLabel, pct } from "@/lib/format";
 import { scopedHref, useStore } from "@/lib/store";
+import { addTimeline } from "@/lib/timeline-image";
 import type { Plan, ProgramId, WhatIfRequest, WhatIfResponse, WhatIfResult } from "@/lib/types";
 import { Button, clsx } from "./ui";
+import { TimelineExport } from "./TimelineExport";
 
 const control = "mt-1.5 min-h-10 w-full rounded-lg border border-line-strong bg-white px-2.5 text-sm text-ink focus:border-accent focus:outline-none";
 const panel = "rounded-2xl border border-line bg-white";
@@ -173,6 +175,7 @@ function Explorer({ plan, viewer }: { plan: Plan; viewer: string }) {
   const [inflation, setInflation] = useState(String(defaultUncertainty.inflation_spread * 100));
   const [volatility, setVolatility] = useState(String(defaultUncertainty.investment_volatility * 100));
   const [last, setLast] = useState<{ result: WhatIfResponse; input: string }>();
+  const [timelines, setTimelines] = useState<WhatIfResult[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(true);
   const selected = program ? catalogue?.programs[program] : undefined;
@@ -202,7 +205,10 @@ function Explorer({ plan, viewer }: { plan: Plan; viewer: string }) {
   useEffect(() => {
     const controller = new AbortController();
     void api.whatIf(initial.choice, initial.draft, controller.signal).then((comparison) => {
-      if (!controller.signal.aborted) setLast({ result: comparison, input: initial.snapshot });
+      if (!controller.signal.aborted) {
+        setLast({ result: comparison, input: initial.snapshot });
+        setTimelines((previous) => addTimeline(previous, comparison));
+      }
     }).catch((problem: Error) => {
       if (!controller.signal.aborted) setError(problem.message);
     }).finally(() => { if (!controller.signal.aborted) setBusy(false); });
@@ -214,7 +220,9 @@ function Explorer({ plan, viewer }: { plan: Plan; viewer: string }) {
     setBusy(true);
     setError("");
     try {
-      setLast({ result: await api.whatIf(choice, draft), input: snapshot });
+      const comparison = await api.whatIf(choice, draft);
+      setLast({ result: comparison, input: snapshot });
+      setTimelines((previous) => addTimeline(previous, comparison));
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : "The comparison failed.");
     } finally {
@@ -314,6 +322,7 @@ function Explorer({ plan, viewer }: { plan: Plan; viewer: string }) {
           </div>
           <ComparisonCards result={result} />
           <ComparisonChart result={result} />
+          {!stale && <TimelineExport results={timelines} />}
           <Risk result={result} />
           <details className={clsx(panel, "px-5 py-4 text-sm")}>
             <summary className="cursor-pointer font-semibold">What went into this comparison?</summary>

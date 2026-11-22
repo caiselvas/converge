@@ -13,12 +13,24 @@ export type MemoryItem = {
   quote: string | null;
   why: string | null;
 };
-type IngestResult = { memory: MemoryItem[]; grounded: boolean };
+type IngestResult = { memory: MemoryItem[]; grounded: boolean; study_preview?: WhatIfResult; study_preview_error?: string };
 type ToolResult = Record<string, unknown> & { draft_changes?: Change[]; memory?: MemoryItem[]; comparison?: WhatIfResult };
 export type ToolActivity = { id: number; name: string; status: "running" | "done" | "failed" };
 type ChatReply = { text: string; comparisons: WhatIfResult[]; draft_changes: Change[] };
 type ChatEvent = ({ type: "tool" } & ToolActivity) | ({ type: "reply" } & ChatReply) | { type: "error"; message: string };
 
+function toolFacts(result: ToolResult) {
+  const facts = { ...result };
+  for (const key of ["baseline", "scenario"] as const) {
+    if (Array.isArray(facts[key])) {
+      facts[key] = (facts[key] as Record<string, unknown>[]).map((line) =>
+        Object.fromEntries(Object.entries(line).filter(([field]) => field !== "cash" && field !== "net_worth")));
+    }
+  }
+  delete facts.months;
+  if (result.comparison) facts.comparison = toolFacts({ ...result.comparison }) as unknown as WhatIfResult;
+  return facts;
+}
 async function streamChat(session_id: string, text: string, draft: Change[], signal: AbortSignal, activity: (event: ToolActivity) => void) {
   const response = await fetch("/api/twin/chat/stream", {
     method: "POST", headers: { "content-type": "application/json" },
@@ -66,10 +78,12 @@ export const voiceApi = {
   startText: (person: string) => call<{ session_id: string }>("/twin/session", { json: { person } }),
   status: () => call<VoiceStatus>("/voice/status"),
   start: (person: string, signal: AbortSignal) => call<VoiceSession>("/voice/session", { json: { person }, signal }),
-  ingest: (session_id: string, speaker: Speaker, text: string, signal: AbortSignal) =>
-    call<IngestResult>("/twin/ingest", { json: { session_id, speaker, text }, signal }),
-  tool: (session_id: string, name: string, args: Record<string, unknown>, draft: Change[], signal?: AbortSignal) =>
-    call<ToolResult>("/twin/tool", { json: { session_id, name, args, draft }, signal }),
+  ingest: (session_id: string, speaker: Speaker, text: string, signal: AbortSignal, draft?: Change[]) =>
+    call<IngestResult>("/twin/ingest", {
+      json: { session_id, speaker, text, ...(draft ? { preview_study: true, draft } : {}) }, signal,
+    }),
+  tool: (session_id: string, name: string, args: Record<string, unknown>, draft: Change[], signal?: AbortSignal, includeSeries = false) =>
+    call<ToolResult>("/twin/tool", { json: { session_id, name, args, draft, include_series: includeSeries }, signal }),
   memory: (person: string, signal?: AbortSignal) =>
     call<{ memory: MemoryItem[] }>(`/twin/memory?person=${encodeURIComponent(person)}`, { signal }),
   clear: (person: string) =>
@@ -84,7 +98,7 @@ export type Transport = {
   signal: AbortSignal;
   activity: () => void;
   state: (state: VoiceState) => void;
-  transcript: (speaker: Speaker, text: string, grounded?: boolean) => void | Promise<void>;
+  transcript: (speaker: Speaker, text: string, grounded?: boolean) => string | void | Promise<string | void>;
   tool: (name: string, args: Record<string, unknown>) => Promise<ToolResult>;
   error: (message: string) => void;
 };
@@ -145,7 +159,7 @@ export async function connectRealtime({
     responding = true;
     spokenRevision = revision;
     state("thinking");
-    send({ type: "response.create", ...(instructions ? { response: { instructions } } : {}) });
+    send({ type: "response.create", ...(instructions ? { response: { instructions, tool_choice: "none" } } : {}) });
   }
   function listen() {
     if (!audioPlaying) state("listening");
@@ -178,12 +192,17 @@ export async function connectRealtime({
             break;
           }
           if (!responding && !audioPlaying) state("thinking");
+          let turnContext: string | void = undefined;
           try {
-            await transcript("user", event.transcript);
+            turnContext = await transcript("user", event.transcript);
+            if (turnContext && turn === revision) send({
+              type: "conversation.item.create",
+              item: { type: "message", role: "system", content: [{ type: "input_text", text: turnContext }] },
+            });
           } catch {
             if (!signal.aborted) notice("This turn may be missing from your profile. You can continue the call.");
           }
-          if (turn === revision) respond();
+          if (turn === revision) respond(turnContext || undefined);
           break;
         case "conversation.item.input_audio_transcription.failed":
           notice("I couldn’t transcribe that. Try saying it again.");
@@ -240,6 +259,11 @@ export async function connectRealtime({
             break;
           }
           if (++rounds > 4 || calls.length > 6) {
+            for (const item of calls) send({
+              type: "conversation.item.create", item: {
+                type: "function_call_output", call_id: item.call_id, output: JSON.stringify({ error: "Turn tool limit reached." }),
+              },
+            });
             notice("The agent could not finish checking this turn. Try one specific question.");
             if (nextTurn) respond();
             else listen();
@@ -253,7 +277,7 @@ export async function connectRealtime({
               result = { error: e instanceof Error ? e.message : "Invalid discovery tool call." };
             }
             send({ type: "conversation.item.create", item: {
-              type: "function_call_output", call_id: item.call_id, output: JSON.stringify(result),
+              type: "function_call_output", call_id: item.call_id, output: JSON.stringify(toolFacts(result)),
             } });
           }
           if (nextTurn || turn === revision) respond();
@@ -286,6 +310,10 @@ export async function connectRealtime({
     });
     if (!answer.ok) throw new Error("OpenAI could not connect voice.");
     await connection.setRemoteDescription({ type: "answer", sdp: await answer.text() });
+    return () => {
+      activity();
+      send({ type: "input_audio_buffer.commit" });
+    };
   } catch (e) {
     close();
     throw e;

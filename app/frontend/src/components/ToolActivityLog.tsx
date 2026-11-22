@@ -3,6 +3,7 @@ import { Check, Loader2, Wrench, X } from "lucide-react";
 import type { ToolActivity } from "@/lib/voice";
 
 const labels: Record<string, string> = {
+  compare_study: "Compare study with the current plan",
   education_programs: "Look up programme fees and duration",
   explore_what_if: "Run a what-if simulation",
   simulate_changes: "Simulate plan changes",

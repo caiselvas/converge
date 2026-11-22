@@ -85,6 +85,8 @@ export interface WhatIfLine {
 }
 
 export interface WhatIfResult {
+  assumed_inputs?: string[];
+  speakable?: string;
   start: Month;
   end: Month;
   months?: Month[];
@@ -96,6 +98,7 @@ export interface WhatIfResult {
     study?: Omit<NonNullable<WhatIfRequest["study"]>, "program"> & {
       name: string; program: string; duration_months: number; first_month_after_study: Month;
       published_semester_fee_chf: number; source: string;
+      replaced_breaks?: { label: string; start: Month; months: number }[];
     };
     housing: WhatIfRequest["housing"]["arrangement"];
     scenario_housing: Plan["shared"]["household"];

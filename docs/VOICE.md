@@ -41,6 +41,10 @@ Open the app’s HTTPS URL on the phone, then choose **Agent → Voice call → 
 
 The hosted call uses a longer silence window for natural pauses and keeps the connection open after failed transcription or an incomplete response. If the transcript misses a key detail, repeat it once the call is listening.
 
+When the caller names a supported master's, the app can run a first-pass study comparison immediately. Missing inputs default to the next September in the projection, thirty percent of normal pay during study, no extra study costs, and no change to pay afterward. The app labels any defaults. If the study overlaps a planned career break, the study branch replaces that break and names it on the comparison. The baseline and agreed plan keep it.
+
+Use **Download timeline image** or **Share image** after a comparison. The PNG includes the baseline and the distinct scenarios tested against it, both personal cash buffers, combined net worth, and a table of the differences. Mobile browsers with file sharing open the device’s share sheet. The same export is available in the What-if explorer.
+
 ### Optional local setup
 
 After syncing the existing backend environment, install the optional packages into the existing virtual environment. The following commands are for an operator who chooses to install the models:

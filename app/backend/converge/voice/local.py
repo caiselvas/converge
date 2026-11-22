@@ -187,7 +187,7 @@ async def respond(session: Session, text: str, pipeline: Pipeline, send, history
     async def on_tool(name, result):
         if result.get("draft_changes"):
             await send({"type": "draft", "draft_changes": result["draft_changes"]})
-        comparison = result if name == "explore_what_if" and "scenario" in result else result.get("comparison")
+        comparison = result if name in {"compare_study", "explore_what_if"} and "scenario" in result else result.get("comparison")
         if comparison:
             await send({"type": "comparison", "result": comparison})
 

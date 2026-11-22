@@ -44,6 +44,7 @@ class Study(Model):
     semester_fee_chf: float | None = Field(None, ge=0, le=100_000)
     extra_cost_chf: float = Field(0, ge=0, le=100_000)
     monthly_pay_delta: float = Field(0, ge=-50_000, le=50_000)
+    replace_overlapping_breaks: bool = False
 
 
 class Housing(Model):
@@ -98,15 +99,24 @@ def scenario_changes(plan: Plan, choice: WhatIf) -> tuple[list[Change], dict]:
         finish = M.add(study.start, duration)
         fee = program["semester_fee_chf"] if study.semester_fee_chf is None else study.semester_fee_chf
         used = {event.id for event in person.career_breaks}
+        replaced = [
+            event for event in person.career_breaks
+            if study.replace_overlapping_breaks
+            and event.start < finish and study.start < M.add(event.start, event.months)
+        ]
         event_id = next(f"study-{i}" for i in range(1, len(used) + 2) if f"study-{i}" not in used)
         period = CareerBreak(id=event_id, label=program["label"], start=study.start, months=duration,
                              income_pct=study.income_pct, semester_fee_chf=fee, one_off_cost_chf=study.extra_cost_chf,
                              study_program=study.program, post_study_pay_delta_chf=study.monthly_pay_delta)
         changes.append(Change(path=f"people.{person.id}.career_breaks",
-                              value=[p.model_dump() for p in [*person.career_breaks, period]]))
+                              value=[p.model_dump() for p in [*person.career_breaks, period] if p not in replaced]))
         inputs["study"] = {**study.model_dump(), "name": person.name, "program": program["label"],
                            "duration_months": duration, "first_month_after_study": finish, "semester_fee_chf": fee,
                            "published_semester_fee_chf": program["semester_fee_chf"], "source": program["source"]}
+        if replaced:
+            inputs["study"]["replaced_breaks"] = [
+                {"label": event.label, "start": event.start, "months": event.months} for event in replaced
+            ]
     # A caller can rely on stable changes when repeating an identical comparison.
     return [change for change in changes if get_value(plan, change.path) != change.value], inputs
 
@@ -215,3 +225,13 @@ def compare_applied(
         "checks_passed": base_run.checks["ok"] and scenario_run.checks["ok"],
         "risk": _risk((plan, scenario), uncertainty) if uncertainty is not None else None,
     }
+
+
+def compact_comparison(result: dict) -> dict:
+    """Keep the verified endpoints and assumptions without the display series."""
+    if "months" not in result:
+        return result
+    compact = {key: value for key, value in result.items() if key != "months"}
+    for key in ("baseline", "scenario"):
+        compact[key] = [{k: v for k, v in line.items() if k not in {"cash", "net_worth"}} for line in result[key]]
+    return compact

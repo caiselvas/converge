@@ -13,11 +13,12 @@ from converge.engine import months as M
 from converge.engine.changes import apply_changes
 from converge.engine.evaluate import chf, evaluate
 from converge.engine.recommend import recommend
-from converge.engine.what_if import PROGRAMS, WhatIf, compare, compare_applied
+from converge.engine.what_if import PROGRAMS, WhatIf, compact_comparison, compare, compare_applied
 from converge.models import Change, Goal, Month, Plan
 from converge.voice.controller import get_gaps, goal_keys, known_items
 from converge.voice.finance import CompareArgs, ProfileArgs, compare_paths, profile
 from converge.voice.memory import Item, Memory
+from converge.voice.study import StudyPreviewArgs, study_preview
 
 log = logging.getLogger(__name__)
 
@@ -137,6 +138,12 @@ def goal_changes(plan: Plan, person: str, items: list[dict]) -> list[Change]:
 
 
 TOOLS = {
+    "compare_study": (StudyPreviewArgs, (
+        "Run a first-pass comparison of one named master's against the current plan. "
+        "Use programme quant_finance or fine_arts. Omit inputs the caller hasn't decided yet; "
+        "the tool reuses the caller's recent answers and labels any illustrative defaults. "
+        "If the study overlaps planned leave, the study branch replaces that leave and the baseline keeps it."
+    )),
     "education_programs": (Empty, "Get published tuition, durations and source links for Quantitative Finance and Fine Arts."),
     "explore_what_if": (WhatIf, (
         "Compare the current plan with studying or a different housing arrangement, or combine both. "
@@ -169,7 +176,7 @@ def definitions() -> list[dict]:
             for name, (model, description) in TOOLS.items()]
 
 
-def execute_tool(name: str, args: dict, session: Session) -> dict:
+def execute_tool(name: str, args: dict, session: Session, *, include_series: bool = False) -> dict:
     if name not in TOOLS:
         raise ValueError("Unknown discovery tool.")
     parsed = TOOLS[name][0].model_validate(args)
@@ -188,8 +195,13 @@ def execute_tool(name: str, args: dict, session: Session) -> dict:
         result = profile(session.plan, parsed.person or person, parsed.topic)
     elif isinstance(parsed, CompareArgs):
         result = compare_paths(session.plan, parsed)
+    elif isinstance(parsed, StudyPreviewArgs):
+        turns = [t["text"] for t in session.memory.recent_turns(session.id, limit=12) if t["speaker"] == "user"]
+        result = study_preview(session.plan, person, turns, parsed, include_series=include_series)
+        if result is None:
+            raise ValueError("Choose Quantitative Finance or Fine Arts before running the study comparison.")
     elif isinstance(parsed, WhatIf):
-        result = compare(session.plan, parsed, include_series=False)
+        result = compare(session.plan, parsed, include_series=include_series)
     elif name == "education_programs":
         result = PROGRAMS
     elif name == "simulate_changes":
@@ -197,7 +209,7 @@ def execute_tool(name: str, args: dict, session: Session) -> dict:
         focus = (person, parsed.focus_goal) if parsed.focus_goal else None
         result = dict(before=summary(session.plan), after=summary(after, focus=focus), focus_goal=parsed.focus_goal)
         if after.assumptions.horizon_months == session.plan.assumptions.horizon_months:
-            result["comparison"] = compare_applied(session.plan, after)
+            result["comparison"] = compare_applied(session.plan, after, include_series=include_series)
         if not any(ch.path.startswith("people.") and ".goals" in ch.path for ch in parsed.changes):
             result["draft_changes"] = [ch.model_dump() for ch in parsed.changes]
     elif name == "list_recommendations":
@@ -221,7 +233,10 @@ def execute_tool(name: str, args: dict, session: Session) -> dict:
         return dict(memory=session.memory.save(session.id, last["id"], parsed.items))
     else:
         return get_gaps(session.memory, session.id, session.plan.person(person))
-    session.memory.record_tool(session.id, {key: value for key, value in result.items() if key != "draft_changes"})
+    facts = compact_comparison({key: value for key, value in result.items() if key != "draft_changes"})
+    if "comparison" in facts:
+        facts["comparison"] = compact_comparison(facts["comparison"])
+    session.memory.record_tool(session.id, facts)
     return result
 
 

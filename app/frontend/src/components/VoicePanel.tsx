@@ -4,9 +4,12 @@ import { AudioLines, Mic, Phone, PhoneOff, Volume2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useStore } from "@/lib/store";
+import { chf, monthLabel } from "@/lib/format";
+import { addTimeline } from "@/lib/timeline-image";
 import type { Change, WhatIfResult } from "@/lib/types";
 import { connectLocal, connectRealtime, voiceApi, type Speaker, type ToolActivity, type Transport, type VoiceState, type VoiceStatus } from "@/lib/voice";
 import { ToolActivityLog } from "./ToolActivityLog";
+import { TimelineExport } from "./TimelineExport";
 import { Button, clsx } from "./ui";
 import { ComparisonCards } from "./WhatIfExplorer";
 
@@ -24,10 +27,12 @@ export function VoicePanel({ person }: { person: string }) {
   const [remaining, setRemaining] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [capture, setCapture] = useState<((enabled: boolean) => void) | null>(null);
+  const [commit, setCommit] = useState<(() => void) | null>(null);
   const [talking, setTalking] = useState(false);
   const [resumeAudio, setResumeAudio] = useState<(() => Promise<void>) | null>(null);
   const [pending, setPending] = useState<Change[]>([]);
   const [comparison, setComparison] = useState<WhatIfResult>();
+  const [timelines, setTimelines] = useState<WhatIfResult[]>([]);
   const draftRef = useRef(draft);
   const connection = useRef<Connection | null>(null);
 
@@ -54,6 +59,7 @@ export function VoicePanel({ person }: { person: string }) {
     setActive(false);
     setRemaining(null);
     setCapture(null);
+    setCommit(null);
     setTalking(false);
     setResumeAudio(null);
     setTools((entries) => entries.map((entry) => entry.status === "running" ? { ...entry, status: "failed" } : entry));
@@ -87,6 +93,7 @@ export function VoicePanel({ person }: { person: string }) {
     setTools([]);
     setPending([]);
     setComparison(undefined);
+    setTimelines([]);
     let lastActivity = Date.now();
     const activity = () => { lastActivity = Date.now(); };
     try {
@@ -111,11 +118,15 @@ export function VoicePanel({ person }: { person: string }) {
       activity();
       tick();
       current.timer = window.setInterval(tick, 250);
+      function showComparison(result: WhatIfResult) {
+        setComparison(result);
+        setTimelines((previous) => addTimeline(previous, result));
+      }
       const onResult = (result: Awaited<ReturnType<typeof voiceApi.tool>>) => {
         if (current.abort.signal.aborted) return;
         if (result.draft_changes?.length) setPending(result.draft_changes);
-        if ("scenario" in result && "baseline" in result) setComparison(result as unknown as WhatIfResult);
-        if (result.comparison) setComparison(result.comparison);
+        if ("scenario" in result && "baseline" in result) showComparison(result as unknown as WhatIfResult);
+        if (result.comparison) showComparison(result.comparison);
       };
       const options: Transport = {
         session, stream, signal: current.abort.signal, activity, error: end,
@@ -126,9 +137,28 @@ export function VoicePanel({ person }: { person: string }) {
           if (next !== "listening") setTalking(false);
         },
         transcript: async (speaker, text, check) => {
-          const result = check === undefined ? await voiceApi.ingest(session.session_id, speaker, text, current.abort.signal) : null;
+          const result = check === undefined ? await voiceApi.ingest(
+            session.session_id, speaker, text, current.abort.signal, speaker === "user" ? draftRef.current : undefined,
+          ) : null;
           if (current.abort.signal.aborted) return;
           setLines((previous) => [...previous.slice(-7), { speaker, text, grounded: check ?? result?.grounded ?? true }]);
+          if (result?.study_preview) {
+            const comparison = result.study_preview;
+            const study = comparison.inputs.study;
+            const id = ++toolId;
+            setTools((entries) => [...entries.slice(-7), { id, name: "compare_study", status: "done" }]);
+            showComparison(comparison);
+            return "The app already ran this comparison for the current spoken turn. "
+              + `Report this result before asking another question: ${comparison.speakable ?? ""} `
+              + `Label these inputs as illustrative: ${comparison.assumed_inputs?.join(", ") || "none"}. `
+              + (study ? `Extra study costs are ${chf(study.extra_cost_chf)}. Change to pay after study is ${chf(study.monthly_pay_delta)} per month. ` : "")
+              + "Keep the reply short. No further tool call is needed for this comparison.";
+          }
+          if (result?.study_preview_error) {
+            const id = ++toolId;
+            setTools((entries) => [...entries.slice(-7), { id, name: "compare_study", status: "failed" }]);
+            return `The app couldn't run the study comparison. Reason: ${result.study_preview_error}. Ask for the one input needed to move forward.`;
+          }
         },
         tool: async (...args) => {
           const id = ++toolId;
@@ -137,7 +167,7 @@ export function VoicePanel({ person }: { person: string }) {
             if (!current.abort.signal.aborted) setTools((entries) => entries.map((entry) => entry.id === id ? { ...entry, status } : entry));
           }
           try {
-            const result = await voiceApi.tool(session.session_id, ...args, draftRef.current, current.abort.signal);
+            const result = await voiceApi.tool(session.session_id, ...args, draftRef.current, current.abort.signal, true);
             if (current.abort.signal.aborted) return {};
             finish("error" in result ? "failed" : "done");
             onResult(result);
@@ -152,13 +182,14 @@ export function VoicePanel({ person }: { person: string }) {
         const talk = await connectLocal({ ...options, onResult, draft: () => draftRef.current });
         if (!current.abort.signal.aborted) setCapture(() => talk);
       } else {
-        await connectRealtime({
+        const sendTurn = await connectRealtime({
           ...options,
           notice: setNotice,
           onPlaybackBlocked: (play) => {
             if (!current.abort.signal.aborted) setResumeAudio(() => play);
           },
         });
+        if (!current.abort.signal.aborted) setCommit(() => sendTurn);
       }
     } catch (error) {
       if (!current.abort.signal.aborted) end(error instanceof Error ? error.message : "Voice could not start.");
@@ -180,6 +211,8 @@ export function VoicePanel({ person }: { person: string }) {
           <div className="flex flex-wrap justify-center gap-2">
             {capture && <Button size="sm" variant="secondary" disabled={state !== "listening" && !talking}
               onClick={() => { capture(!talking); setTalking(!talking); }}><Mic size={14} /> {talking ? "Send turn" : "Start talking"}</Button>}
+            {commit && state === "listening" && <Button variant="secondary" className="min-h-11 rounded-full"
+              onClick={commit}><Mic size={14} /> Done speaking</Button>}
             <Button variant="primary" className="min-h-11 rounded-full bg-[#a72f39] px-5 text-white hover:bg-[#8b2530]" onClick={() => end()}><PhoneOff size={15} /> End call</Button>
             {resumeAudio && <Button variant="secondary" className="min-h-11 rounded-full" onClick={() => {
               void resumeAudio().then(() => setResumeAudio(null)).catch(() => setNotice("Could not play audio. Check your browser’s sound settings."));
@@ -203,10 +236,19 @@ export function VoicePanel({ person }: { person: string }) {
               <span className="ml-1 text-warn">Multiple questions</span>}</li>)}
         </ul>
       </details>}
-      {comparison && <details className="px-2">
+      {comparison && <details key={JSON.stringify(comparison.inputs.study)} open className="px-2">
         <summary className="cursor-pointer font-medium text-accent">Latest engine comparison</summary>
+        {comparison.inputs.study && <p className="mt-2 text-xs text-muted">
+          {comparison.inputs.study.program} · {monthLabel(comparison.inputs.study.start)} · {comparison.inputs.study.income_pct}% of normal pay
+          · {chf(comparison.inputs.study.semester_fee_chf)} per semester
+          {comparison.assumed_inputs?.length ? ` · Assumed ${comparison.assumed_inputs.join(", ")}` : ""}
+        </p>}
+        {comparison.inputs.study?.replaced_breaks?.map((event) => <p key={`${event.start}-${event.label}`} className="mt-1 text-xs text-muted">
+          Study replaces {event.label} starting {monthLabel(event.start)} ({event.months} months) in the comparison. The baseline keeps it.
+        </p>)}
         <div className="mt-2 [&>div]:grid-cols-1"><ComparisonCards result={comparison} compact /></div>
       </details>}
+      {timelines.length > 0 && <div className="px-2"><TimelineExport results={timelines} /></div>}
       {pending.length > 0 && <div className="flex items-center justify-between gap-2 rounded-xl bg-page p-2">
         <span>Plan changes are ready to review.</span>
         <Button size="sm" variant="primary" onClick={() => { addChanges(pending); setPending([]); }}>Add to draft</Button>
